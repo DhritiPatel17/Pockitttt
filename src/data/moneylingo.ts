@@ -1,0 +1,16 @@
+export const moneyLingoChapters = [
+  { id: 'basics', chapter: 1, title: 'Money Basics', emoji: '🧠', description: 'Understanding how money works' },
+  { id: 'saving', chapter: 2, title: 'Saving Options', emoji: '🏦', description: 'Where to put your cash safely' },
+  { id: 'banking', chapter: 3, title: 'Banking & Credit Basics', emoji: '💳', description: 'Checking accounts and building trust' },
+  { id: 'stocks', chapter: 4, title: 'Stock Market', emoji: '📈', description: 'Investing in companies you like' },
+  { id: 'mutualFunds', chapter: 5, title: 'Mutual Funds & ETFs', emoji: '📊', description: 'Investing in small bites' },
+  { id: 'crypto', chapter: 6, title: 'Cryptocurrency & Bitcoin', emoji: '₿', description: 'Digital money explained' },
+  { id: 'insurance', chapter: 7, title: 'Insurance', emoji: '🛡️', description: 'Protecting your future' },
+  { id: 'loans', chapter: 8, title: 'Loans, Debt & Credit Cards', emoji: '💸', description: 'Borrowing smart' },
+  { id: 'taxes', chapter: 9, title: 'Taxes', emoji: '🧾', description: 'What you need to know' },
+  { id: 'realestate', chapter: 10, title: 'Real Estate & Gold', emoji: '🏠✨', description: 'Investing in physical assets' },
+  { id: 'retirement', chapter: 11, title: 'Retirement & Long-Term', emoji: '🌱', description: 'Planning for forever' },
+  { id: 'planning', chapter: 12, title: 'Financial Planning & Mindset', emoji: '🧭', description: 'Creating your path' },
+  { id: 'fraud', chapter: 13, title: 'Online Fraud Awareness', emoji: '⚠️', description: 'Staying safe online' },
+  { id: 'fintech', chapter: 14, title: 'Digital Finance & Fintech', emoji: '📱', description: 'The modern way to manage money' },
+];

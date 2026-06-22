@@ -1,0 +1,6 @@
+{
+  "name": "pockittt",
+  "description": "A playful personal finance literacy web app for Gen Z teens that teaches them how to understand, save, and start investing in plain human English.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
