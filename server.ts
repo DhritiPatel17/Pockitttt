@@ -5,6 +5,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import YahooFinance from "yahoo-finance2";
 import fs from "fs/promises";
+import { handleGeneratePlans } from "./server/routes/generatePlans";
 
 dotenv.config();
 
@@ -66,11 +67,15 @@ async function startServer() {
       // 1. Fetch real market numeric data (Nifty 50 over the last 30 days)
       try {
         const period1 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        const history: any = await yahooFinance.historical('^NSEI', { period1 });
-        chartData = history.map((item: any) => ({
-          date: item.date.toISOString().split('T')[0],
-          close: Math.round(item.close * 100) / 100
-        }));
+        const period2 = new Date();
+        const result: any = await yahooFinance.chart('^NSEI', { period1, period2 });
+        const quotes = result.quotes || [];
+        chartData = quotes
+          .filter((item: any) => item && item.date && item.close !== null && item.close !== undefined)
+          .map((item: any) => ({
+            date: item.date instanceof Date ? item.date.toISOString().split('T')[0] : new Date(item.date).toISOString().split('T')[0],
+            close: Math.round(item.close * 100) / 100
+          }));
       } catch (err) {
         console.warn("Failed to fetch Nifty 50 data:", err);
       }
@@ -291,13 +296,108 @@ Rules:
     });
   });
 
+function generateLocalCoinkieReply(messageText: string): string {
+  const query = messageText.toLowerCase().trim();
+
+  // 1. GREETINGS
+  if (query.match(/\b(hi|hello|hey|yo|sup|namaste|greetings)\b/i) || query.includes("who are you") || query.includes("what is your name") || query.includes("coinkie")) {
+    return `Hey there! Coinkie in the house! 🪙✨ I'm your Gen Z-focused virtual financial sidekick. 
+
+I can help you understand how to:
+- 🐖 Save up for that brand new gadget or dream sneaker.
+- ⚡ Use UPI and online banking securely without getting scammed.
+- 📈 Get started with investing in mutual funds & stocks (even if you're under 18!).
+- 📊 Put together a solid budget that doesn't ruin your social life.
+
+What financial question is on your mind today? Let's crack it!`;
+  }
+
+  // 2. STOCKS & MUTUAL FUNDS / INVESTING
+  if (query.includes("invest") || query.includes("stock") || query.includes("share") || query.includes("mutual fund") || query.includes("sip") || query.includes("groww") || query.includes("zerodha") || query.includes("equity")) {
+    return `Ooh, starting to invest early is a literal cheat code! Because of **compound interest**, starting at 15 instead of 25 can make a massive difference. 📈
+
+Here is the real talk on investing for teens in India:
+- **Under 18:** You can't open an independent investing account. But your parents/guardians can open a **Minor Demat & Trading account** for you on apps like Groww or Zerodha. They'll need to co-sign and complete KYC checks.
+- **Mutual Fund SIPs (Systematic Investment Plans):** This is where you invest a fixed amount (like ₹500/month) into a diversified pool of stocks. For beginners, a low-cost **Nifty 50 Index Fund** is super smart because it tracks India's top 50 companies.
+- **Risk Disclaimer:** Unlike bank savings, stock market investments are market-linked and NOT guaranteed. They fluctuate daily, but historically, equity mutual funds in India have averaged around **10-12% annual returns** over 5+ years!
+
+*Rule of thumb: Only invest money you don't need for the next 3 to 5 years!* 💸`;
+  }
+
+  // 3. UPI / APPS / DIGITAL WALLET / SCAMS
+  if (query.includes("upi") || query.includes("gpay") || query.includes("paytm") || query.includes("phonepe") || query.includes("wallet") || query.includes("scam") || query.includes("fraud") || query.includes("safe") || query.includes("otp") || query.includes("phishing") || query.includes("card")) {
+    return `UPI is the GOAT of digital payments, but scammers play dirty! ⚡🔒 Let's make sure you're bulletproof:
+
+1. **UPI PIN is ONLY for paying out:** You never, EVER need to enter your UPI PIN to *receive* money. If someone sends a link and says "Enter PIN to receive reward", it is a 100% scam.
+2. **The Name Check:** Always look at the verified name on your screen before hitting 'Send'. 
+3. **No OTP Sharing:** No bank, customer support, or helpline will ever ask for your OTP. Keep it strictly to yourself.
+4. **Teen Apps:** If you're under 18 and want UPI, check out teen-focused smart banking cards and apps like FamPay, OmniCard, or Akudo. They let you pay digitally with parental supervision!`;
+  }
+
+  // 4. RD / PPF / SAVINGS INTRUMENTS
+  if (query.includes("ppf") || query.includes("rd") || query.includes("fd") || query.includes("recurring") || query.includes("fixed deposit") || query.includes("post office") || query.includes("gold") || query.includes("nsc")) {
+    return `If you want 100% safe, guaranteed, zero-risk options backed by the Government of India, these are your best friends! 🛡️
+
+- **Post Office Recurring Deposit (RD):** Perfect for saving monthly. You put in a fixed amount (e.g., ₹1,000/month) for 5 years. It compounds quarterly with high interest.
+- **Bank RD/FD:** Major banks (like SBI/HDFC) let you set up RDs for flexible timelines (anywhere from 6 months to 10 years). Great for short-term goals.
+- **PPF (Public Provident Fund):** The gold standard of long-term tax-free savings. It pays ~7.1% interest (revised quarterly) but has a **15-year lock-in period**. Incredible for super long-term wealth building.
+- **Sukanya Samriddhi Yojana (SSY):** If you are a girl or have a girl child, this offers some of the highest risk-free rates (~8.2%), locked in until age 21.
+
+*Since these are risk-free, they don't fluctuate with the stock market. Always keep your emergency funds here!*`;
+  }
+
+  // 5. BUDGETING & POCKET MONEY / SPENDING
+  if (query.includes("budget") || query.includes("spend") || query.includes("pocket money") || query.includes("allowance") || query.includes("saving") || query.includes("save") || query.includes("fampay") || query.includes("expens")) {
+    return `Managing pocket money is all about being the CEO of your own wallet! 🍕💸 Here's the **Coinkie 50-30-20 Rules** to budget like a pro:
+
+- **50% for Needs:** This is essential stuff you literally cannot skip (e.g. transport, school notes, basic food).
+- **30% for Wants:** Fun things! Streaming subscriptions, cafe visits with friends, gaming skins, fancy bubble tea.
+- **20% for Savings:** This goes straight into your savings account, a Piggy Vault, or an RD *immediately* when you get your allowance. Move it before you can spend it!
+
+**Coinkie's Secret Weapon: The 24-Hour Rule!** ⏳ 
+Before buying any non-urgent "want" (like that cool hoodie online), close the tab and wait 24 hours. If you still want it tomorrow, buy it. Most times, you'll forget about it and save your cash!`;
+  }
+
+  // 6. INFLATION
+  if (query.includes("inflation") || query.includes("shrinkflation") || query.includes("price") || query.includes("cost")) {
+    return `Ah, **Inflation** — structural enemy #1 of your savings piggy bank! 💸👾
+
+Inflation is when the cost of living goes up over time, meaning ₹100 buys less stuff tomorrow than it did today.
+*Example:* Think about your favorite bubble tea or burger. A few years ago it was cheaper, or the portion size was bigger (that's called **shrinkflation**, where companies keep the price same but give you fewer chips/biscuit pieces!).
+
+If you keep cash under your mattress, or in a basic savings account paying only 2% to 3% interest, and inflation is running at 5% to 6%, **your money is actually losing purchasing power**. This is why investing in assets that beat inflation (like Mutual Funds, Equity, or recurring deposits) is absolutely critical for growing wealth!`;
+  }
+
+  // 7. MINOR / UNDER 18 / GUARDIAN ACCOUNT
+  if (query.includes("minor") || query.includes("under 18") || query.includes("parents") || query.includes("guardian") || query.includes("kid") || query.includes("child") || query.includes("teen")) {
+    return `Being a teen investor in India is totally doable, but you'll need teamwork! 🧑‍🎓🤝
+
+Since you are under 18:
+1. **Bank Accounts:** You can open a **Minor Savings Account** (like SBI Pehli Udaan, or HDFC Kid's Account) which gives you your own debit card and net-banking with daily spending limits.
+2. **Investment Accounts:** Your parents/guardians must sign as primary account holders. They will provide their PAN card and set up a joint Demat/Mutual fund account where you can watch the money compound together.
+3. **Teen Neo-banking:** Apps like FamPay, OmniCard, or FYP offer simple domestic teen cards and UPI IDs with parents acting as the wallet controllers.`;
+  }
+
+  // 8. DEFAULT TEEN WEALTH ADVICE fallback
+  return `Ooh, that's a super interesting question! 🧠💡 
+
+As Coinkie, my general rule of thumb for teen financial success is:
+1. **Earn & Save first:** Make saving ₹100 out of every ₹500 a strict, non-negotiable habit.
+2. **Avoid high-risk traps:** Say absolute **NO** to online speculative "get-rich-quick" Telegram channels, crypto double-your-money schemes, or fancy futures & options trading. They are designed to wipe out beginners.
+3. **Compound early:** Even ₹500/month compounding at 10% in a secure mutual fund or 7% in an RD for a few years sets you years ahead of your classmates!
+
+*(💡 Tip: Keep searching, exploring, or ask me something specific like "safe UPI", "how to invest in SIP", or "50-30-20 budget plan"!)*`;
+}
+
   // Chat endpoint for Coinkie
   app.post("/api/chat", async (req, res) => {
     try {
       const { message, history } = req.body;
       
       if (!ai) {
-        return res.status(500).json({ error: "Gemini API Key is not configured." });
+        console.warn("No GEMINI_API_KEY. Falling back to dynamic local Coinkie chatbot!");
+        const fallbackText = generateLocalCoinkieReply(message);
+        return res.json({ reply: fallbackText });
       }
       
       const systemPrompt = `You are Coinkie, a friendly, Gen Z-focused AI financial assistant chatbot for teenagers.
@@ -320,6 +420,7 @@ Rules:
       });
       
       // We don't have to replay the full history if we just format it as contents, but GenAI SDK allows sending history or building it
+      console.log(`[Coinkie Chat] Calling Gemini API (via @google/genai SDK): POST https://generativelanguage.googleapis.com/v1alpha/models/gemini-3.5-flash:generateContent`);
       const response = await ai.models.generateContent({
         model: "gemini-3.5-flash",
         contents: [
@@ -333,212 +434,15 @@ Rules:
 
       res.json({ reply: response.text });
     } catch (error: any) {
-      console.error("Chat API Error:", error);
-      res.status(500).json({ error: "Sorry, I'm taking a quick nap. Try again in a sec!" });
+      console.error("Chat API Error, using dynamic local fallback:", error);
+      const fallbackText = generateLocalCoinkieReply(req.body.message || "");
+      res.json({ reply: fallbackText });
     }
   });
 
   // API to generate budget plan tailored for Gen Z
-  app.post("/api/generate-plan", async (req, res) => {
-    try {
-      const { profile, checkIn, goal } = req.body;
-
-      if (!ai) {
-        return res.status(500).json({
-          error: "Gemini API Key is not configured. Please add GEMINI_API_KEY in the Secrets panel of AI Studio's Settings menu."
-        });
-      }
-
-      if (!goal) {
-        return res.status(400).json({ error: "Your personal savings / money goal is required." });
-      }
-
-      const prompt = `ROLE
-You are the reasoning engine behind the "Your Goal" feature inside a personal finance app used mostly by teenagers (15-22 years old). A user has something they want to buy or save for. Your job: do the math correctly, then explain it like you're texting a friend who's smart but has never touched a finance app. You are not a SEBI-registered investment adviser and must never sound like you're giving one-on-one professional advice — you sound like a chill older cousin who's good with money.
-
-WRITE LIKE THIS, NOT LIKE A BANK
-The user should be able to read your answer ONCE and immediately know what to do. That's the only test that matters. Below is the exact tone to copy — match this level of casual and direct, every single time:
-
-"If you have ₹1,000 saved, you can put it in a mutual fund. Inside mutual funds there are types — large cap, mid cap, small cap. Large cap = big, stable companies, slow and steady. Small cap = smaller companies, can grow fast but can also drop fast. For short time and wanting it safe, large cap or just an FD (Fixed Deposit — bank holds your money for a fixed time and pays you extra) makes more sense than small cap."
-
-Rules for matching this tone:
-Short sentences. Say it once, plainly, then move on.
-Define every term the SECOND you use it, in brackets or right after, like "FD (Fixed Deposit — you lock money with a bank and it pays you extra)."
-Use "you" directly. "You can do X" not "one could consider X."
-No "leverage," "utilize," "synergize," "portfolio," "in today's world," "personalized," or any word that sounds like a brochure.
-Numbers first, plain meaning right after. Never leave a number sitting there unexplained.
-It's fine to sound like a text message. It's not fine to sound like a form letter.
-
-INPUTS YOU WILL RECEIVE
-- monthly_income (salary/allowance/pocket money) — from app data: ₹${profile.role === 'Student' ? checkIn.monthlyIncome + ' (Allowance/Pocket Money)' : checkIn.monthlyIncome}
-- monthly_expenses — from app data: ₹${checkIn.monthlySpend}
-- goal_description (free text): "${goal}"
-- Anything else the user types (target amount, timeframe, existing savings, income, expenses, risk comfort — may or may not be present)
-
-STEP -1 — WHICH NUMBERS DO YOU ACTUALLY USE (do this before anything else)
-The app gives you stored monthly_income and monthly_expenses by default. But the user's own message always wins over stored app data. Follow this exactly:
-- If the user's message does NOT mention income, expenses, or savings at all → use the app's stored monthly_income and monthly_expenses. Say where the numbers came from: "Going by your account — income ₹X, expenses ₹Y."
-- If the user's message DOES state a number for income, expenses, or how much they can save, and it's different from what's stored in the app → use the user's number, not the app's. Say so plainly: "You said your income is ₹X — I'll use that instead of what's on your account, which shows ₹Y."
-- If the user states a number that happens to MATCH the app's stored data → just use it normally, no need to flag anything.
-This applies separately to each number. Example: if the user gives a new income figure but says nothing about expenses, use their new income + the app's stored expenses. Don't assume one mention overrides everything.
-- Never blend or average a user-given number with the app's stored number. Pick one source per number — the user's stated one if they gave one, the app's otherwise.
-- Whatever target cost or timeframe the user gives for the goal itself always comes from their message, never the app — the app only stores income/expenses/savings, not goal details.
-
-STEP 0 — CHECK YOU HAVE ENOUGH TO WORK WITH
-Before calculating anything, check if you have a rough cost and a rough timeframe.
-If either is missing, don't silently guess. Either:
-- State a clear assumption out loud: "Assuming a regular MacBook Pro costs around ₹1,40,000 — tell me if you mean a different one."
-- Or ask one short, direct question.
-
-STEP 1 — DO THE MATH FIRST, PLAINLY
-1. monthly_surplus = monthly_income − monthly_expenses (using whichever source you picked in STEP -1 for each) → say "this is what you actually have left each month."
-2. If the user already said a separate savings number (different from income/expenses), compare it to monthly_surplus. If they don't match, say it straight: "You said ₹1,500, but your real leftover is ₹1,000. Let's use ₹1,000."
-3. required_monthly_saving = goal_cost ÷ timeframe_in_months → say "this is what you'd need to save every month, no extra growth assumed."
-4. One direct sentence: does required_monthly_saving fit easily, is it tight, or does it not fit. Say this BEFORE anything else, plainly — "good news, this fits easy" or "this is tight" or "this doesn't fit yet, here's why."
-
-STEP 2 — GIVE 2-3 OPTIONS, MATCHED TO TIMEFRAME (this is the part the user actually wants)
-For any goal 1 month or longer, give the user 2-3 named options like "Option A," "Option B," "Option C" — short sprint vs slower with more breathing room vs (if 5+ years) more growth-focused. Each option: the math in one line, then "what this means for you" in one line. Copy the style from the WRITE LIKE THIS section above exactly.
-
-Match risk level to timeframe — this logic does not change no matter how the user asks:
-- Under 1 year → only safe stuff. FD (Fixed Deposit) or RD (Recurring Deposit — same as FD but you add a bit every month instead of one lump sum) or a plain savings account. Say plainly: "nothing market-linked here — if the market dips right before you need the cash, you're stuck."
-- 1-3 years → still safe only. FD, RD, or a short-term debt mutual fund ("a fund that mostly lends to safe places like the government, barely moves up or down"). No stocks, no equity mutual funds, no small/mid cap, no crypto, no IPO — even if it "sounds fine," a short timeline can't absorb a bad few months.
-- 3-5 years → split it. Part safe (FD/RD/debt fund), part growth (a simple large-cap or index mutual fund via SIP — explain SIP as "you put in a fixed small amount every month instead of one big chunk"). Give a rough split like 60% safe / 40% growth and say why in one line.
-- 5+ years → growth options open up. This is the ONLY timeframe where you can mention mid-cap or small-cap mutual funds, individual stocks, or — only here — riskier stuff like crypto (Bitcoin etc.) or IPOs, and ONLY with this exact one-line framing every time: "this is the riskier end — it can drop a lot, including losing money, and shouldn't be your whole plan, just a slice of it." Even at 5+ years, keep the last 6-12 months before the goal in something safe like FD, so a bad market month right before doesn't wreck the goal.
-
-Never call crypto, IPOs, or small-cap funds "safe" or "no risk" — they are the opposite of that, regardless of how the user frames the request. If the user asks for "safest, no rush" framing, that always means FD/RD or large-cap/debt funds — never crypto or IPO.
-
-Trading (buying/selling stocks actively, "day trading," "learn from YouTube and start") is NOT an option you offer. Most people lose money doing this without real experience, and the app isn't the place to point a teenager toward it. If the user specifically asks about active trading, say plainly that this is high-risk and most beginners lose money doing it without training, and steer back to the SIP/mutual-fund/FD options instead.
-
-STEP 3 — RETURNS: BE HONEST, NEVER PROMISE A NUMBER
-- Never say "will," "guaranteed," "risk-free," or "definitely" about any return.
-- If asked about doubling money: 72 ÷ number of years = roughly the yearly return you'd need. Say plainly if that's realistic for the risk level in Step 2 or not.
-- Mention past returns only as a range, every time with this exact framing: "in the past this type of fund has averaged roughly X-Y% a year — that changes year to year, it's not promised."
-- If unsure of a number, say "I'm not 100% sure of the exact number, but roughly..."
-
-STEP 4 — NAMING THINGS
-Name real categories and well-known providers as examples only, never as "this exact one is good." Example: "for the safe part, an FD with a bank like SBI, HDFC, etc. For the growth part, a SIP into a large-cap or Nifty 50 index fund — providers like UTI, SBI Mutual Fund, etc., offer these." Never call out one specific fund's name as recommended (no "Invesco is good," no "buy this one") — name the type, not the winner. ALWAYS add "etc." when listing bank or fund examples so the user knows they can use any bank and are not restricted to just those examples.
-
-STEP 5 — OUTPUT FORMAT
-1. yourNumbers — income, expenses, leftover, goal cost, timeframe, monthly saving needed. Keep it in one line.
-2. realityCheck — one direct sentence: fits easy, tight, or doesn't fit yet.
-3. yourOptions — 2-3 named options matched to Step 2, math in one line each, "what this means for you" in one line each. Match the WRITE LIKE THIS tone exactly. **CRITICAL: Start each new option on a new line (use \\n) so they are easy to read but take up less space. Make the option titles (e.g., **Option A**, **Option B**) bold using markdown.**
-4. whatThisCouldLookLike — 2-3 example categories/providers per option, plain words. **CRITICAL: Start each option's examples on a new line (use \\n). Make the option titles (e.g., **Option A**) bold using markdown.**
-5. ifItDoesntFitYet — 1-2 simple fixes (longer timeframe, lower target, save ₹X more) with new numbers. Use a new line (\\n) for new ideas. Make the fix titles (e.g., **Fix 1**, **Fix 2**) bold using markdown.
-6. disclaimer (always include, verbatim): "This is general financial education based on the numbers you've given me, not personalized investment advice from a registered adviser. Markets carry risk, and past performance doesn't guarantee future returns. For a decision specific to your full situation, it's worth talking to a SEBI-registered investment adviser, especially before investing real money."
-
-HARD CONSTRAINTS
-- Never say "guaranteed," "risk-free," "will definitely," or "always profitable."
-- Never skip the math, even in plain form.
-- Never suggest stocks, crypto, IPOs, or mid/small-cap funds for goals under 5 years, even if asked directly.
-- Never call crypto or IPO "safe" or suggest them for a "no rush, no risk" ask — flip that framing back to FD/RD/large-cap every time.
-- Never name one specific fund/stock/coin as "the good one" — categories only.
-- Never present active trading as a real option — name the real risk plainly if asked, then redirect to SIP/FD options.
-- If a user's numbers don't add up, say so plainly instead of quietly working around it.
-- If the user pushes for a guarantee or "just tell me what to buy," hold the line kindly, explain briefly why, give the honest range instead.
-
-TONE
-Talk like a cousin who's good with money explaining it over chai — text-message casual, numbers explained the second they appear, real comparisons from daily life. Be straight about bad news instead of softening it. The user should never have to re-read a sentence to get what it means.`;
-
-      const responseSchema = {
-        type: Type.OBJECT,
-        properties: {
-          yourNumbers: { type: Type.STRING, description: "income, expenses, what's left over, goal cost, timeframe, what you'd need to save monthly. Keep it in one line." },
-          realityCheck: { type: Type.STRING, description: "one direct, simple sentence: does this fit easily, is it tight, or does it not fit yet." },
-          yourOptions: { type: Type.STRING, description: "2-3 clearly labeled plans (for 1+ year goals) matched to the timeframe rules in Step 2, with the math shown simply, not just the conclusion. Each option gets a one-line 'what this means for you.' Use a single newline (\\n) to separate each option to save space. Make the option titles (e.g., **Option A**) bold." },
-          whatThisCouldLookLike: { type: Type.STRING, description: "2-3 named example categories/providers per option, explained in plain words. Use a single newline (\\n) to separate options. Make the option titles (e.g., **Option A**) bold." },
-          ifItDoesntFitYet: { type: Type.STRING, description: "1-2 concrete, simple fixes (save for longer, lower the target, save ₹X more a month) with the new numbers worked out. Separate fixes with a single newline (\\n). Make the fix titles (e.g., **Fix 1**) bold." },
-          disclaimer: { type: Type.STRING, description: "Always include: This is general financial education based on the numbers you've given me, not personalized investment advice from a registered adviser. Markets carry risk, and past performance doesn't guarantee future returns. For a decision specific to your full situation, it's worth talking to a SEBI-registered investment adviser, especially before you start investing real money." }
-        },
-        required: ["yourNumbers", "realityCheck", "yourOptions", "whatThisCouldLookLike", "ifItDoesntFitYet", "disclaimer"]
-      };
-
-      let responseText = "";
-
-      // Try gemini-3.5-flash with retry
-      let attempts = 0;
-      const maxAttempts = 2;
-      let lastError: any = null;
-
-      while (attempts < maxAttempts) {
-        try {
-          console.log(`[POCKITTT] Attempting generateContent on gemini-3.5-flash (attempt ${attempts + 1})`);
-          const response = await ai.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: prompt,
-            config: {
-              responseMimeType: "application/json",
-              responseSchema
-            }
-          });
-          responseText = response?.text || "";
-          break;
-        } catch (err: any) {
-          lastError = err;
-          attempts++;
-          console.warn(`[POCKITTT] gemini-3.5-flash failed (attempt ${attempts}):`, err.message || err);
-          if (attempts < maxAttempts) {
-            await new Promise((resolve) => setTimeout(resolve, 800));
-          }
-        }
-      }
-
-      // If gemini-3.5-flash failed, fall back to gemini-3.1-flash-lite
-      if (!responseText) {
-        try {
-          console.log("[POCKITTT] Falling back to gemini-3.1-flash-lite...");
-          const response = await ai.models.generateContent({
-            model: "gemini-3.1-flash-lite",
-            contents: prompt,
-            config: {
-              responseMimeType: "application/json",
-              responseSchema
-            }
-          });
-          responseText = response?.text || "";
-        } catch (liteErr: any) {
-          console.warn("[POCKITTT] gemini-3.1-flash-lite fallback also failed:", liteErr.message || liteErr);
-        }
-      }
-
-      // If both API models failed (e.g. 503 unavailability), return a completely personalized fallback plan
-      if (!responseText) {
-        console.warn("[POCKITTT] Both Gemini models unavailable due to high platform load. Utilizing high-quality local personalized fallback engine.");
-        const fallbackPlans = [
-          {
-            name: "The Sandbox Systematic Plan (SIP) 📈",
-            explanation: `Compound interest is the ultimate life cheat code, no cap ${profile?.name || "bestie"}. By setting aside just a tiny sliver of your ₹${(checkIn?.monthlyIncome || 0).toLocaleString('en-IN')} pocket cash (e.g., around ₹${Math.max(100, Math.round((checkIn?.monthlyIncome || 0) * 0.15))} each month) into a diversified equity index fund, you can watch your savings cook in the background while you focus on studying. This is tailored specially for your goal of: "${goal || "accumulate and compound cash"}".`,
-            timeHorizon: "1-3 years",
-            riskLevel: "Medium",
-            howToStart: "Neutrally explore popular personal finance applications in India like Groww or ET Money to open a minor custody account under parent or guardian guidance. Zero brand endorsement!"
-          },
-          {
-            name: "The Budget Bypass Challenge 🧋",
-            explanation: `You noted a current monthly spend of ₹${(checkIn?.monthlySpend || 0).toLocaleString('en-IN')}. By selectively choosing to dodge 3 store-bought premium boba tea cups or high-markup canteen chips, you can instantly secure ₹800 to ₹1200 of leftover cash to supercharge your wishlist goal: "${goal || "your savings goals"}". This represents a super easy, risk-free savings play!`,
-            timeHorizon: "2-6 months",
-            riskLevel: "Low",
-            howToStart: "Go to the 'Wishlist & Challenges' tab in pockittt to active the Bubble Tea Bypass and gaming cosmetic sabbatical challenges!"
-          },
-          {
-            name: "The Digital Skills Side Hustle 💻",
-            explanation: `If your current pocket savings of ₹${Math.max(0, (checkIn?.monthlyIncome || 0) - (checkIn?.monthlySpend || 0)).toLocaleString('en-IN')} feel too tight to reach your target of "${goal || "growing your wallet"}", raising the income side is the high-key brainy play. Explore selling digital skills like custom thumbnail editing, minor code template creation, or editing premium video clips for local shops or campus seniors.`,
-            timeHorizon: "6+ months",
-            riskLevel: "Low",
-            howToStart: "Build a single free GDrive containing 3 of your premium sample creations, then let family, older cousins, or neighbors know you're looking for minor freelance opportunities."
-          }
-        ];
-        return res.json({ plans: fallbackPlans });
-      }
-
-      const decoded = JSON.parse(responseText.trim());
-      res.json(decoded);
-
-    } catch (error: any) {
-      console.error("API Route Handing Error:", error);
-      res.status(500).json({
-        error: error.message || "Something went wrong in pockittt servers while contacting our Gemini engine."
-      });
-    }
-  });
+  app.post("/api/generate-plan", handleGeneratePlans);
+  app.post("/api/generate-plans", handleGeneratePlans);
 
   // Serve static assets in production, or hook Vite dev server in development
   if (process.env.NODE_ENV !== "production") {

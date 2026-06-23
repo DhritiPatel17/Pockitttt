@@ -49,15 +49,20 @@ export function CoinkieChat() {
         })
       });
 
-      const data = await response.json();
-      
-      if (response.ok) {
-        setMessages(prev => [...prev, { role: 'bot', text: data.reply }]);
-      } else {
-        setMessages(prev => [...prev, { role: 'bot', text: data.error || 'Oops! My circuits got tangled. Try again?' }]);
+      if (!response.ok) {
+        let errMessage = `Server returned ${response.status} ${response.statusText}`;
+        try {
+          const errData = await response.json();
+          if (errData.error) errMessage = errData.error;
+        } catch (_) {} // Ignore JSON parse errors for HTML 404 pages
+        throw new Error(errMessage);
       }
-    } catch (error) {
-      setMessages(prev => [...prev, { role: 'bot', text: "Hmm, I couldn't reach the internet. Try again later!" }]);
+
+      const data = await response.json();
+      setMessages(prev => [...prev, { role: 'bot', text: data.reply }]);
+    } catch (error: any) {
+      console.error("Chat fetch error:", error);
+      setMessages(prev => [...prev, { role: 'bot', text: `Failed to connect: ${error.message || "Network Error"}. Please check your deployment's backend or API settings.` }]);
     } finally {
       setIsLoading(false);
       scrollToBottom();

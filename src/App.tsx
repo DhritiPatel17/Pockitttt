@@ -295,12 +295,12 @@ export default function App() {
                 onClick={() => setActiveTab('planner')}
                 className={`inline-flex items-center justify-center font-display text-sm font-bold border-4 border-[#09090B] rounded-full py-3 px-5 shadow-[4px_4px_0px_0px_#09090B] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0px_0px_#09090B] active:shadow-none active:translate-x-[4px] active:translate-y-[4px] transition-all cursor-pointer ${
                   activeTab === 'planner'
-                    ? 'bg-[#FF2A85] text-white'
-                    : 'bg-[#FFFDF0] text-[#09090B]'
+                    ? 'bg-[#FF2A85] text-white hover:bg-[#E01B6D]'
+                    : 'bg-[#FFFDF0] hover:bg-[#FFD1DC] text-[#09090B]'
                 }`}
                 id="tab-select-planner"
               >
-                <Sparkles className="w-4.5 h-4.5 stroke-[2.5px]" />
+                <Sparkles className="w-4.5 h-4.5 stroke-[2.5px] mr-1" />
                 <span>Goal Planner ⭐</span>
               </button>
 
@@ -309,8 +309,8 @@ export default function App() {
                 onClick={() => setActiveTab('wallet')}
                 className={`inline-flex items-center justify-center font-display text-sm font-bold border-4 border-[#09090B] rounded-full py-3 px-5 shadow-[4px_4px_0px_0px_#09090B] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0px_0px_#09090B] active:shadow-none active:translate-x-[4px] active:translate-y-[4px] transition-all cursor-pointer ${
                   activeTab === 'wallet'
-                    ? 'bg-[#FF2A85] text-white'
-                    : 'bg-[#FFFDF0] text-[#09090B]'
+                    ? 'bg-[#FF2A85] text-white hover:bg-[#E01B6D]'
+                    : 'bg-[#FFFDF0] hover:bg-[#FFD1DC] text-[#09090B]'
                 }`}
                 id="tab-select-wallet"
               >
@@ -324,8 +324,8 @@ export default function App() {
                 className={`inline-flex items-center justify-center font-display text-sm font-bold border-4 border-[#09090B] rounded-full py-3 px-5 shadow-[4px_4px_0px_0px_#09090B] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0px_0px_#09090B] active:shadow-none active:translate-x-[4px] active:translate-y-[4px] transition-all cursor-pointer ${
                   // @ts-expect-error TypeScript narrows the type of activeTab above, but we still need this for styling structure
                   activeTab === 'finance-times'
-                    ? 'bg-[#FF2A85] text-white'
-                    : 'bg-[#FFFDF0] text-[#09090B]'
+                    ? 'bg-[#FF2A85] text-white hover:bg-[#E01B6D]'
+                    : 'bg-[#FFFDF0] hover:bg-[#FFD1DC] text-[#09090B]'
                 }`}
                 id="tab-select-finance-times"
               >
@@ -338,8 +338,8 @@ export default function App() {
                 onClick={() => setActiveTab('moneylingo')}
                 className={`inline-flex items-center justify-center font-display text-sm font-bold border-4 border-[#09090B] rounded-full py-3 px-5 shadow-[4px_4px_0px_0px_#09090B] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0px_0px_#09090B] active:shadow-none active:translate-x-[4px] active:translate-y-[4px] transition-all cursor-pointer ${
                   activeTab === 'moneylingo'
-                    ? 'bg-[#FF2A85] text-white'
-                    : 'bg-[#FFFDF0] text-[#09090B]'
+                    ? 'bg-[#FF2A85] text-white hover:bg-[#E01B6D]'
+                    : 'bg-[#FFFDF0] hover:bg-[#FFD1DC] text-[#09090B]'
                 }`}
                 id="tab-select-moneylingo"
               >

@@ -57,10 +57,14 @@ export const FinanceTimes: React.FC<FinanceTimesProps> = ({ onClose }) => {
     try {
       const res = await fetch('/api/finance-times');
       if (!res.ok) {
-        throw new Error('Failed to fetch live data');
+        let errMessage = `Server returned ${res.status} ${res.statusText}`;
+        try {
+          const errData = await res.json();
+          if (errData.error) errMessage = errData.error;
+        } catch (_) {} 
+        throw new Error(`Failed to fetch live data: ${errMessage}`);
       }
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
 
       setNews(data.news);
       setMarketChartData(data.marketChart);
