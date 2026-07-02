@@ -15,6 +15,10 @@ export interface GoalAnalysisPlay {
   category?: string;
   risk: string;
   description: string;
+  the_plan?: string;
+  the_math?: string;
+  real_life_example?: string;
+  pro_tip?: string;
   monthly_investment?: number;
   timeline: string;
   timeframe_label?: string;
@@ -33,6 +37,19 @@ export interface GoalAnalysisPlay {
 export interface GoalAnalysis {
   user_goal_summary?: string;
   plays: GoalAnalysisPlay[];
+}
+
+export interface SavedConversation {
+  id: string;
+  timestamp: string;
+  goalText: string;
+  goalSummary: string;
+  plays: GoalAnalysisPlay[];
+  isTypeB: boolean;
+  typeBResponse: string;
+  closingSummary: string;
+  targetAmount: number | null;
+  timeframeMonths: number | null;
 }
 
 export interface MoneyLingoChapter {

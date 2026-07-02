@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Background border & background -->
+  <rect x="16" y="16" width="480" height="480" rx="120" fill="#C6FF00" stroke="#09090B" stroke-width="24" />
+  
+  <!-- Coin graphic with Neobrutalist styling -->
+  <g transform="translate(256, 256)">
+    <!-- 3D depth shadow -->
+    <circle cx="16" cy="16" r="140" fill="#09090B" />
+    <!-- Outer coin body -->
+    <circle cx="0" cy="0" r="140" fill="#FF2A85" stroke="#09090B" stroke-width="16" />
+    <!-- Inner coin body -->
+    <circle cx="-10" cy="-10" r="100" fill="#FEF08A" stroke="#09090B" stroke-width="12" />
+    <!-- Indian Rupee Symbol -->
+    <text x="-10" y="32" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="115" fill="#09090B" text-anchor="middle">₹</text>
+  </g>
+</svg>

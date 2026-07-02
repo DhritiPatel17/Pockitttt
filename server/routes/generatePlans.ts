@@ -1,1001 +1,917 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-// Standard compound interest math helpers following exact formulas requested by user
-
-// Monthly recurring deposits (RD/SIP-style), compounded monthly:
-// FV = P × [((1+r)^n − 1) / r] × (1+r)
-// P = monthly amount, r = monthly rate (annual ÷ 12), n = number of months
-function calculateSIP_FV(P: number, annualRate: number, months: number): number {
-  if (annualRate <= 0) return P * months;
-  const r = annualRate / 12;
-  const factor = ((Math.pow(1 + r, months) - 1) / r) * (1 + r);
-  return Math.round(P * factor);
+// Round final numbers to the nearest ₹10 for readability
+function roundTo10(value: number): number {
+  return Math.round(value / 10) * 10;
 }
 
-function calculateSIP_Required(target: number, annualRate: number, months: number): number {
-  if (annualRate <= 0) return Math.round(target / months);
-  const r = annualRate / 12;
-  const factor = ((Math.pow(1 + r, months) - 1) / r) * (1 + r);
-  return Math.round(target / factor);
-}
-
-// Lump sum (FD-style), compounded quarterly (standard for Indian bank FDs):
-// FV = P × (1 + r/4)^(4×t)
-// P = principal, r = annual rate, t = years
-function calculateFD_FV(P: number, annualRate: number, months: number): number {
-  const t = months / 12;
-  return Math.round(P * Math.pow(1 + annualRate / 4, 4 * t));
-}
-
-// Solves for required annual rate r to turn P/month into target FV in n months
-function solveRequiredSIP_Rate(P: number, target: number, months: number): number {
-  let low = 0.0;
-  let high = 15.0; // up to 1500% annual rate
-  let solvedRate = 0;
-  for (let iter = 0; iter < 100; iter++) {
-    const mid = (low + high) / 2;
-    const fv = calculateSIP_FV(P, mid, months);
-    if (Math.abs(fv - target) < 1) {
-      solvedRate = mid;
-      break;
-    }
-    if (fv > target) {
-      high = mid;
-    } else {
-      low = mid;
-    }
+function formatRupeeValue(val: number): string {
+  const isNegative = val < 0;
+  const absVal = Math.abs(val);
+  let formatted = "";
+  if (absVal >= 10000000) {
+    const cr = absVal / 10000000;
+    formatted = `${cr.toFixed(2).replace(/\.00$/, '')} Cr`;
+  } else if (absVal >= 100000) {
+    const l = absVal / 100000;
+    formatted = `${l.toFixed(2).replace(/\.00$/, '')} L`;
+  } else {
+    formatted = absVal.toLocaleString('en-IN');
   }
-  return solvedRate || (low + high) / 2;
+  return isNegative ? `-${formatted}` : formatted;
 }
 
-// Solves for number of months needed to hit target with deposit P at annualRate
-function solveMonthsRequired(P: number, target: number, annualRate: number): number {
-  for (let m = 1; m <= 360; m++) {
-    if (calculateSIP_FV(P, annualRate, m) >= target) {
-      return m;
-    }
-  }
-  return Math.ceil(target / P);
+// 1. RD (monthly deposits, quarterly compounding)
+// Formula: M = R × [(1+i)^n - 1] / (1 - (1+i)^(-1/3))
+// R = monthly deposit, i = quarterly rate = rate/400, n = quarters = months / 3
+function calculateRD_FV(R: number, annualRatePct: number, months: number): number {
+  if (annualRatePct <= 0) return R * months;
+  const i = annualRatePct / 400;
+  const n = months / 3;
+  const numerator = Math.pow(1 + i, n) - 1;
+  const denominator = 1 - Math.pow(1 + i, -1/3);
+  return R * (numerator / denominator);
 }
 
-function detectIsTypeB(clean: string, hasFiguresInMessage: boolean, hasTimeframeInMsg: boolean): boolean {
-  if (hasFiguresInMessage) return false;
-
-  const cleanLower = clean.toLowerCase();
-
-  // If a pure explaining instruction/question is typed, let it go to pure explainer instead of Type B
-  const explainerKeywords = ["what is", "explain", "meaning of", "definition of", "how does a", "how do mutual", "how do sips"];
-  const isExplainerQuery = explainerKeywords.some(k => cleanLower.includes(k));
-  if (isExplainerQuery) return false;
-
-  const concreteNouns = ["laptop", "phone", "mobile", "iphone", "airpods", "ipad", "trip", "travel", "vacation", "goa", "scooter", "bike", "activa", "shoes", "sneakers", "course", "fees", "college", "car", "watch", "camera", "playstation", "ps5", "xbox", "gimbal", "gift"];
-  const hasConcreteNoun = concreteNouns.some(noun => cleanLower.includes(noun));
-
-  const vagueBroadKeywords = [
-    "get rich", "become rich", "millionaire", "billionaire", "wealthy",
-    "what should i do", "what to do with", "my money", "bad with money", "good with money",
-    "financial tips", "how to invest", "where to invest", "how to save", "passive income", 
-    "make money", "earn money", "investing tips", "wealth building", "double my money",
-    "financial freedom", "retire early", "fire movement", "grow money", "multiply money",
-    "money advice", "advice for 18", "advice for 20", "advice for college", "financial habits"
-  ];
-  const matchesVagueKeyword = vagueBroadKeywords.some(keyword => cleanLower.includes(keyword));
-
-  // If there are no figures and either it matches vague keywords or lacks any concrete purchase noun:
-  if (!hasTimeframeInMsg) {
-    if (!hasConcreteNoun || matchesVagueKeyword) {
-      return true;
-    }
-  }
-
-  return false;
+function calculateRD_Required(target: number, annualRatePct: number, months: number): number {
+  if (annualRatePct <= 0) return target / months;
+  const i = annualRatePct / 400;
+  const n = months / 3;
+  const numerator = Math.pow(1 + i, n) - 1;
+  const denominator = 1 - Math.pow(1 + i, -1/3);
+  return target / (numerator / denominator);
 }
 
-// Extremely robust text/string financial parameter extractor in Node.js
-function extractFinancialParameters(goalStr: string, checkIn: any, profile: any) {
-  let clean = goalStr.toLowerCase().replace(/,/g, '');
+// 2. PPF (annual deposit, yearly compounding)
+// Formula: F = P × [((1+i)^n - 1) / i]
+// P = annual contribution, i = annual rate = rate/100, n = years = months / 12
+function calculatePPF_FV(P: number, annualRatePct: number, months: number): number {
+  if (annualRatePct <= 0) return P * (months / 12);
+  const i = annualRatePct / 100;
+  const n = Math.max(1, months / 12);
+  return P * ((Math.pow(1 + i, n) - 1) / i);
+}
+
+function calculatePPF_Required(target: number, annualRatePct: number, months: number): number {
+  const i = annualRatePct / 100;
+  const n = Math.max(1, months / 12);
+  if (annualRatePct <= 0) return target / n;
+  return target / ((Math.pow(1 + i, n) - 1) / i);
+}
+
+// 3. SIP (monthly deposits, monthly compounding)
+// Formula: FV = P × [((1+i)^n - 1) / i] × (1+i)
+// P = monthly deposit, i = monthly rate = rate/1200, n = months
+function calculateSIP_FV(P: number, annualRatePct: number, months: number): number {
+  if (annualRatePct <= 0) return P * months;
+  const i = annualRatePct / 1200;
+  const factor = ((Math.pow(1 + i, months) - 1) / i) * (1 + i);
+  return P * factor;
+}
+
+function calculateSIP_Required(target: number, annualRatePct: number, months: number): number {
+  if (annualRatePct <= 0) return target / months;
+  const i = annualRatePct / 1200;
+  const factor = ((Math.pow(1 + i, months) - 1) / i) * (1 + i);
+  return target / factor;
+}
+
+// Helper for Extended Timeline (SIP)
+function calculateExtendedTimelineSIP(target: number, currentCapital: number, monthlyDeposit: number, annualRatePct: number): number {
+  if (monthlyDeposit <= 0) return 999;
+  if (annualRatePct <= 0) return Math.ceil(Math.max(0, target - currentCapital) / monthlyDeposit);
+  const i = annualRatePct / 1200;
+  const pFactor = monthlyDeposit * (1 + i) / i;
+  const num = target + pFactor;
+  const den = currentCapital + pFactor;
+  if (den <= 0 || num <= 0) return 999;
+  const n = Math.log(num / den) / Math.log(1 + i);
+  return Math.ceil(n);
+}
+
+// Helper for Extended Timeline (RD, quarterly compounding)
+function calculateExtendedTimelineRD(target: number, currentCapital: number, monthlyDeposit: number, annualRatePct: number): number {
+  if (monthlyDeposit <= 0) return 999;
+  if (annualRatePct <= 0) return Math.ceil(Math.max(0, target - currentCapital) / monthlyDeposit);
+  const i = annualRatePct / 400; // quarterly
+  const denRD = 1 - Math.pow(1 + i, -1/3);
+  const factor = monthlyDeposit / denRD;
+  const num = target + factor;
+  const den = currentCapital + factor;
+  if (den <= 0 || num <= 0) return 999;
+  const n = Math.log(num / den) / Math.log(1 + i);
+  return Math.ceil(n * 3);
+}
+
+// Parsing Indian currency values like "40k" or "1.5 Lakh"
+function parseIndianValuePair(numStr: string, unitStr: string): number {
+  let numPart = parseFloat(numStr.replace(/,/g, ''));
+  if (isNaN(numPart)) return 0;
   
-  // Normalize common word numbers to digits
-  clean = clean
-    .replace(/\btwo years\b/g, "2 years")
-    .replace(/\bthree years\b/g, "3 years")
-    .replace(/\bfour years\b/g, "4 years")
-    .replace(/\bfive years\b/g, "5 years")
-    .replace(/\bten years\b/g, "10 years")
-    .replace(/\bone year\b/g, "1 year")
-    .replace(/\bhalf year\b/g, "6 months")
-    .replace(/\bhalf a year\b/g, "6 months")
-    .replace(/\ba year\b/g, "1 year")
-    .replace(/\ba month\b/g, "1 month")
-    .replace(/\btwo months\b/g, "2 months")
-    .replace(/\bthree months\b/g, "3 months")
-    .replace(/\bsix months\b/g, "6 months");
-
-  let is_pure_explainer = true;
-  let explainer_topic = "general";
-
-  // Check common topics first to set explainer_topic
-  if (clean.includes("mutual fund") || clean.includes("mutual-fund") || clean.includes(" mf ") || clean.includes(" mfs ")) {
-    explainer_topic = "mutual fund";
-  } else if (clean.includes("sip") || clean.includes("systematic investment")) {
-    explainer_topic = "sip";
-  } else if (clean.includes("stock") || clean.includes("share market") || clean.includes("equity") || clean.includes("shares")) {
-    explainer_topic = "stocks";
-  } else if (clean.includes("bitcoin") || clean.includes("crypto") || clean.includes("ethereum") || clean.includes("doge") || clean.includes("solana")) {
-    explainer_topic = "bitcoin";
-  } else if (clean.includes("ipo")) {
-    explainer_topic = "ipo";
-  } else if (clean.includes("double") || clean.includes("rule of 72") || clean.includes("2x") || clean.includes("doubling")) {
-    explainer_topic = "double money";
-  } else if (clean.includes("ppf") || clean.includes("provident fund")) {
-    explainer_topic = "ppf";
-  } else if (clean.includes("ssy") || clean.includes("sukanya")) {
-    explainer_topic = "ssy";
-  } else if (clean.includes("tax") || clean.includes("saving scheme") || clean.includes("nsc")) {
-    explainer_topic = "tax";
+  const multiplierWord = unitStr ? unitStr.toLowerCase().trim() : "";
+  let multiplier = 1;
+  if (multiplierWord === "k" || multiplierWord === "thousand" || multiplierWord === "thousands") {
+    multiplier = 1000;
+  } else if (multiplierWord === "lakh" || multiplierWord === "lakhs" || multiplierWord === "lac" || multiplierWord === "lacs" || multiplierWord === "l") {
+    multiplier = 100000;
+  } else if (multiplierWord === "cr" || multiplierWord === "crore" || multiplierWord === "crores") {
+    multiplier = 10000000;
+  } else if (multiplierWord === "arab" || multiplierWord === "arabs") {
+    multiplier = 1000000000;
   }
+  return numPart * multiplier;
+}
 
-  // Parse numbers: "15k", "1.5k", "1.5 lakh"
-  function parseValue(valStr: string): number {
-    let s = valStr.trim();
-    let multiplier = 1;
-    if (s.endsWith("k")) {
-      multiplier = 1000;
-      s = s.slice(0, -1);
-    } else if (s.endsWith("lakh") || s.endsWith("l")) {
-      multiplier = 100000;
-      s = s.endsWith("lakh") ? s.slice(0, -4) : s.slice(0, -1);
+// Parsing Indian currency values like "40k" or "1.5 Lakh"
+function parseSingleIndianValue(valStr: string): number {
+  let s = valStr.toLowerCase().trim();
+  s = s.replace(/,/g, '');
+  s = s.replace(/₹|rs\.?|inr|rupees|rupee/g, ' ').trim();
+
+  const match = s.match(/^((?:\d{1,3}(?:,\d{2,3})*|\d+)(?:\.\d+)?)\s*(k|thousand|thousands|lakh|lakhs|lac|lacs|l|cr|crore|crores|arab|arabs)?$/i);
+  if (!match) return 0;
+
+  return parseIndianValuePair(match[1], match[2] || "");
+}
+
+function detectMonthlySavingsFromMessage(text: string): number | null {
+  const regexes = [
+    /(?:save|saving|put|stash|invest|investing|budget|contrib|contribute)\s*(?:₹|rs\.?|rs|inr|rupees)?\s*(\d+(?:\.\d+)?\s*(?:k|thousand|thousands|lakh|lakhs|lac|lacs|l|cr|crore|crores|arab|arabs)?)\s*(?:a|per|\/)\s*(?:month|m|monthly)\b/i,
+    /(?:₹|rs\.?|rs|inr|rupees)?\s*(\d+(?:\.\d+)?\s*(?:k|thousand|thousands|lakh|lakhs|lac|lacs|l|cr|crore|crores|arab|arabs)?)\s*(?:a|per|\/)\s*(?:month|m|monthly)\b/i,
+    /(?:save|saving|invest|investing|put)\s*(?:₹|rs\.?|rs|inr|rupees)?\s*(\d+(?:\.\d+)?\s*(?:k|thousand|thousands|lakh|lakhs|lac|lacs|l|cr|crore|crores|arab|arabs)?)\s*(?:each|every|per)\s*month\b/i
+  ];
+
+  for (const regex of regexes) {
+    const match = text.match(regex);
+    if (match && match[1]) {
+      const val = parseSingleIndianValue(match[1]);
+      if (val > 0) return val;
     }
-    const parsed = parseFloat(s);
-    return isNaN(parsed) ? 0 : parsed * multiplier;
   }
+  return null;
+}
 
-  // Helper to extract digit values not followed by months/years
-  function parseNumbersFromMessage(text: string): number[] {
-    const stripped = text
-      .replace(/\b\d+\s*(?:month|months|m|year|years|y)\b/g, '')
-      .trim();
+function isTimeframeNumber(numStr: string, text: string, matchIndex: number): boolean {
+  const substringAfter = text.substring(matchIndex + numStr.length).trim().toLowerCase();
+  return /^(?:year|years|month|months|y|m|yr|yrs)\b/.test(substringAfter);
+}
 
-    const regex = /(?:₹|rs\.?|rs)?\s*(\d+(?:\.\d+)?\s*(?:k|lakh|l)?)\b/g;
-    let match;
-    const values: number[] = [];
-
-    while ((match = regex.exec(stripped)) !== null) {
-      const val = parseValue(match[1]);
-      if (val > 0) {
-        values.push(val);
-      }
+// Local intent classifier that matches exact required categories
+function classifyLocalIntent(goal: string, checkIn: any): {
+  category: 'A' | 'B' | 'C' | 'D';
+  income?: number;
+  goalAmount?: number;
+  timeframeMonths: number;
+  savingCapacity?: number;
+  lumpSum?: number;
+} {
+  const clean = goal.toLowerCase().replace(/,/g, '');
+  
+  // Extract all numbers along with optional unit words from the full clean text
+  const parsedNumbers: { value: number; isTimeframe: boolean; originalText: string; index: number }[] = [];
+  const valueRegex = /((?:\d{1,3}(?:,\d{2,3})*|\d+)(?:\.\d+)?)\s*(k|thousand|thousands|lakh|lakhs|lac|lacs|l|cr|crore|crores|arab|arabs)?\b/gi;
+  
+  let match;
+  while ((match = valueRegex.exec(clean)) !== null) {
+    const rawNum = match[1];
+    const unitWord = match[2] || "";
+    const index = match.index;
+    const isTimeframe = isTimeframeNumber(match[0], clean, index);
+    const val = parseIndianValuePair(rawNum, unitWord);
+    
+    if (val > 0) {
+      parsedNumbers.push({
+        value: val,
+        isTimeframe,
+        originalText: match[0],
+        index
+      });
     }
-    return values;
   }
 
-  // Helper to extract explicit monthly contribution patterns
-  function detectMonthlySavingsFromMessage(text: string): number | null {
-    const regexes = [
-      /(?:save|saving|put|stash|invest|investing|budget|contrib|contribute)\s*(?:₹|rs\.?|rs)?\s*(\d+(?:\.\d+)?\s*(?:k|lakh|l)?)\s*(?:a|per|\/)\s*(?:month|m|monthly)/,
-      /(?:₹|rs\.?|rs)?\s*(\d+(?:\.\d+)?\s*(?:k|lakh|l)?)\s*(?:a|per|\/)\s*(?:month|m|monthly)/,
-      /(?:save|saving|invest|investing|put)\s*(?:₹|rs\.?|rs)?\s*(\d+(?:\.\d+)?\s*(?:k|lakh|l)?)\s*(?:each|every|per)\s*month/
-    ];
+  const monetaryNumbers = parsedNumbers.filter(pn => !pn.isTimeframe);
+  const timeframeItems = parsedNumbers.filter(pn => pn.isTimeframe);
 
-    for (const regex of regexes) {
-      const match = text.match(regex);
-      if (match && match[1]) {
-        const val = parseValue(match[1]);
-        if (val > 0) return val;
-      }
+  let timeframeMonths = 12;
+  if (timeframeItems.length > 0) {
+    const tfItem = timeframeItems[0];
+    const unitAfter = clean.substring(tfItem.index + tfItem.originalText.length).trim().toLowerCase();
+    if (/^(?:year|years|y|yr|yrs)\b/.test(unitAfter)) {
+      timeframeMonths = tfItem.value * 12;
+    } else {
+      timeframeMonths = tfItem.value;
     }
-    return null;
+  } else {
+    // Fallback to original regexes
+    const monthMatch = clean.match(/(\d+)\s*(?:month|months|m)\b/);
+    const yearMatch = clean.match(/(\d+)\s*(?:year|years|y)\b/);
+    if (monthMatch) {
+      timeframeMonths = parseInt(monthMatch[1], 10);
+    } else if (yearMatch) {
+      timeframeMonths = parseInt(yearMatch[1], 10) * 12;
+    }
   }
 
-  // Check goal-oriented keywords
-  const goalKeywords = ["laptop", "trip", "mobile", "phone", "buy", "save", "saving", "reach", "goal", "want", "target", "get", "earn", "accumulate", "gather", "by year end", "in a year", "time", "months", "years", "scooter", "bike", "shoes"];
-  const isGoalTriggered = goalKeywords.some(kw => clean.includes(kw));
-
-  const messageNumbers = parseNumbersFromMessage(clean);
-  const detectedMonthlyMsg = detectMonthlySavingsFromMessage(clean);
-  const hasFiguresInMessage = messageNumbers.length > 0;
-
-  let hasTimeframeInMsg = false;
-  const monthMatch = clean.match(/(\d+)\s*(?:month|months|m)\b/);
-  const yearMatch = clean.match(/(\d+)\s*(?:year|years|y)\b/);
-  if (monthMatch || yearMatch) {
-    hasTimeframeInMsg = true;
-  }
-
-  const is_type_b = detectIsTypeB(clean, hasFiguresInMessage, hasTimeframeInMsg);
-
-  if (isGoalTriggered || hasFiguresInMessage) {
-    is_pure_explainer = false;
-  }
-
-  // STORED_PROFILE values
   const stored_income = checkIn?.monthlyIncome || 0;
   const stored_spend = checkIn?.monthlySpend || 0;
   const stored_surplus = Math.max(0, stored_income - stored_spend);
-  const stored_profile_is_available = (stored_income > 0);
 
-  let target_amount = 15000; // default
-  let timeframe_months = 12; // default
-  let stated_monthly_savings: number | null = null;
-  let used_stored_profile_savings = false;
-  let is_clarifying_needed = false;
+  let income: number | undefined;
+  let lumpSum: number | undefined;
+  let goalAmount: number | undefined;
+  let savingCapacity: number | undefined;
 
-  let hasSavingsInMsg = (detectedMonthlyMsg !== null);
-  let hasTargetInMsg = false;
-
-  // Rule 1: Use Message numbers if present
-  if (hasFiguresInMessage) {
-    if (detectedMonthlyMsg !== null) {
-      stated_monthly_savings = detectedMonthlyMsg;
-      hasSavingsInMsg = true;
-
-      const otherVals = messageNumbers.filter(v => v !== detectedMonthlyMsg);
-      if (otherVals.length > 0) {
-        target_amount = Math.max(...otherVals);
-        hasTargetInMsg = true;
-      } else {
-        // Only savings specified in message, we multiply by 12 as target fallback
-        target_amount = detectedMonthlyMsg * 12;
-        hasTargetInMsg = false;
-      }
-    } else {
-      if (messageNumbers.length >= 2) {
-        // Assume large is target, smaller is monthly savings
-        const sorted = [...messageNumbers].sort((a, b) => b - a);
-        target_amount = sorted[0];
-        stated_monthly_savings = sorted[1];
-        hasTargetInMsg = true;
-        hasSavingsInMsg = true;
-      } else {
-        const singleVal = messageNumbers[0];
-        if (singleVal >= 2000) {
-          target_amount = singleVal;
-          hasTargetInMsg = true;
-          hasSavingsInMsg = false;
-        } else {
-          stated_monthly_savings = singleVal;
-          hasSavingsInMsg = true;
-          hasTargetInMsg = false;
-          target_amount = singleVal * 12;
-        }
-      }
+  for (const item of monetaryNumbers) {
+    const textBefore = clean.substring(Math.max(0, item.index - 30), item.index).toLowerCase();
+    const textAfter = clean.substring(item.index + item.originalText.length, Math.min(clean.length, item.index + item.originalText.length + 30)).toLowerCase();
+    
+    // Check if it's saving capacity (monthly savings)
+    const isMonthlySavings = /per\s*month|monthly|p\.m\.|every\s*month|each\s*month|\/month|\/m\b/.test(textAfter) ||
+                            (/save\s*|saving\s*|invest\s*|investing\s*/.test(textBefore) && /month|monthly/.test(textAfter));
+                            
+    if (isMonthlySavings) {
+      savingCapacity = item.value;
+      continue;
     }
 
-    // Timeframe extraction from message
-    if (monthMatch && monthMatch[1]) {
-      timeframe_months = parseInt(monthMatch[1], 10);
-    } else if (yearMatch && yearMatch[1]) {
-      timeframe_months = parseInt(yearMatch[1], 10) * 12;
+    // Check if it's income
+    const isIncome = /earn|earning|income|salary|pay|freelance|freelancing/.test(textBefore);
+    if (isIncome) {
+      income = item.value;
+      continue;
     }
 
-  } else if (!is_pure_explainer) {
-    // Rule 2: Message mentions no figures but mentions a goal, fetch from STORED_PROFILE
-    if (stored_profile_is_available && stored_surplus > 0) {
-      stated_monthly_savings = stored_surplus;
-      used_stored_profile_savings = true;
-      hasSavingsInMsg = false;
+    // Check if it's a lump sum / existing capital
+    const isLumpSum = /have|had|saved|in\s*hand|lump\s*sum|capital|deposit|invest\s+|put\s+/.test(textBefore);
+    if (isLumpSum) {
+      lumpSum = item.value;
+      continue;
+    }
 
-      // Guess target by category keyword
-      if (clean.includes("laptop")) {
-        target_amount = 40000;
-      } else if (clean.includes("phone") || clean.includes("mobile")) {
-        target_amount = 15000;
-      } else if (clean.includes("trip") || clean.includes("vacation") || clean.includes("travel")) {
-        target_amount = 25000;
-      } else if (clean.includes("gadget") || clean.includes("headphones") || clean.includes("watch")) {
-        target_amount = 5000;
-      } else if (clean.includes("shoes") || clean.includes("sneakers") || clean.includes("jacket")) {
-        target_amount = 4000;
-      } else if (clean.includes("course") || clean.includes("program") || clean.includes("college") || clean.includes("fees")) {
-        target_amount = 30000;
-      } else if (clean.includes("scooter") || clean.includes("bike")) {
-        target_amount = 80000;
-      } else {
-        target_amount = 15000;
-      }
-
-      // Timeframe guess or extract from message
-      if (monthMatch && monthMatch[1]) {
-        timeframe_months = parseInt(monthMatch[1], 10);
-      } else if (yearMatch && yearMatch[1]) {
-        timeframe_months = parseInt(yearMatch[1], 10) * 12;
-      } else {
-        // Reasonable timeframe
-        timeframe_months = Math.max(6, Math.min(24, Math.ceil(target_amount / stated_monthly_savings)));
-      }
-    } else {
-      // Rule 3: STORED_PROFILE also empty/unavailable AND the message has no numbers
-      is_clarifying_needed = true;
+    // Check if it's a goal / target / buy
+    const isGoal = /goal|target|need|want\s*to\s*buy|buy|purchase|worth|price|cost/.test(textBefore);
+    if (isGoal) {
+      goalAmount = item.value;
+      continue;
     }
   }
 
-  // Per-field override: if user mentions target but not savings inside message,
-  // we pull savings from STORED_PROFILE!
-  if (hasTargetInMsg && !hasSavingsInMsg) {
-    if (stored_profile_is_available && stored_surplus > 0) {
-      stated_monthly_savings = stored_surplus;
-      used_stored_profile_savings = true;
+  // If we still have unassigned values, let's distribute them intelligently
+  const unassigned = monetaryNumbers.filter(item => 
+    item.value !== income && 
+    item.value !== lumpSum && 
+    item.value !== goalAmount && 
+    item.value !== savingCapacity
+  );
+
+  if (unassigned.length > 0) {
+    if (unassigned.length === 1) {
+      const val = unassigned[0].value;
+      // Is it a Category A query?
+      if (/\b(?:earn|earning|income|salary|split|divide|allocate|budget|freelancing|freelance)\b/i.test(clean)) {
+        income = val;
+      } else if (/\b(?:have|idle|lump sum|put|invest)\b/i.test(clean) && !/\b(?:save|goal|target|need|want to save)\b/i.test(clean)) {
+        lumpSum = val;
+      } else {
+        goalAmount = val;
+      }
+    } else if (unassigned.length === 2) {
+      // e.g. "I have 21L ... home worth 70L"
+      // The smaller one is likely lumpSum or saving capacity, the larger is goal
+      const val1 = unassigned[0].value;
+      const val2 = unassigned[1].value;
+      
+      if (val1 < val2) {
+        lumpSum = val1;
+        goalAmount = val2;
+      } else {
+        goalAmount = val1;
+        lumpSum = val2;
+      }
     }
   }
 
-  let goal_item = "kit";
-  if (clean.includes("laptop")) goal_item = "laptop";
-  else if (clean.includes("phone") || clean.includes("mobile") || clean.includes("iphone") || clean.includes("airpods")) goal_item = "phone";
-  else if (clean.includes("trip") || clean.includes("vacation") || clean.includes("travel") || clean.includes("goa")) goal_item = "trip";
-  else if (clean.includes("scooter") || clean.includes("bike") || clean.includes("activa")) goal_item = "scooter";
-  else if (clean.includes("shoes") || clean.includes("sneakers")) goal_item = "shoes";
-  else if (clean.includes("course") || clean.includes("fees") || clean.includes("college")) goal_item = "course";
+  let category: 'A' | 'B' | 'C' | 'D' = 'D';
+
+  const isCategoryA = /\b(?:earn|earning|income|salary|split|divide|allocate|budget|freelancing|freelance)\b/i.test(clean);
+  const isCategoryC = /\b(?:have|idle|lump sum|put|invest)\b/i.test(clean) && !/\b(?:save|goal|target|need|want to save)\b/i.test(clean);
+  const isCategoryB = /\b(?:save|saving|goal|target|need|want to|buy)\b/i.test(clean);
+
+  if (isCategoryA && income) {
+    category = 'A';
+  } else if (isCategoryC && lumpSum && !goalAmount) {
+    category = 'C';
+  } else if ((isCategoryB || goalAmount) && goalAmount) {
+    category = 'B';
+  }
+
+  // If we have goalAmount but no savingCapacity, let's see if we can detect one
+  if (category === 'B' && !savingCapacity) {
+    savingCapacity = detectMonthlySavingsFromMessage(clean) || (stored_surplus > 0 ? stored_surplus : undefined);
+  }
 
   return {
-    is_pure_explainer,
-    is_type_b,
-    target_amount,
-    timeframe_months,
-    stated_monthly_savings,
-    used_stored_profile_savings,
-    is_clarifying_needed: is_type_b ? false : is_clarifying_needed,
-    explainer_topic,
-    hasTimeframeInMsg,
-    goal_item
+    category,
+    income,
+    goalAmount,
+    timeframeMonths,
+    savingCapacity,
+    lumpSum
   };
 }
 
-// Generate fallback response dynamically matching the exact calculations Context solved in Node.js
-function getFallbackPlays(isPureExplainer: boolean, target: number, months: number, statedP: number | null, calculationsContext: any, userAge: number, goal_item: string): any {
-  const isGapCase = calculationsContext.is_gap_case;
-  const isUnder18 = userAge < 18;
-  const guardianTip = isUnder18 ? "Ask your parents to help you create a joint account or co-sign" : "Use standard mobile-banking or apps like Groww/Zerodha Coin";
+// Generate fallback plays locally matching the exact calculations Context solved in Node.js
+function getLocalFallbackResponse(goal: string, checkIn: any, profile: any): any {
+  const { category, income, goalAmount, timeframeMonths, savingCapacity, lumpSum } = classifyLocalIntent(goal, checkIn);
+  const userAge = profile?.age || 18;
+  const rates = {
+    postOfficeRD: 6.70,
+    bankRD: 7.00,
+    ppf: 7.10,
+    nsc: 7.70,
+    ssy: 8.20,
+    debtFund: 9.00,
+    equityFund: 13.00
+  };
 
-  if (calculationsContext.is_type_b) {
+  if (category === 'A') {
+    const inc = income || 40000;
+    const needs = roundTo10(inc * 0.5);
+    const wants = roundTo10(inc * 0.3);
+    const savings = roundTo10(inc * 0.2);
+
     return {
-      is_type_b: true,
-      type_b_response: `Hey buddy! That's a great open-ended question. Getting rich, becoming a millionaire, or learning what to do with your money is all about building strong daily habits early in life. 
-      
-      **THE PLAN:** True wealth isn't built in months with high-risk shortcuts. It's built by starting early, staying consistent, avoiding bad debt, and letting compounding work its magic over years. Focus on upgrading your skills, earning more, and stashing away a fixed percentage of whatever you get before spending the rest.
-      
-      **THE MATH:** If you start saving just ₹2,500/month consistently right now from age 18, and it grows in a diversified index fund at a typical 12% p.a. CAGR, you'll accumulate over ₹25 Lakhs by age 33! That's the real power of time and consistency.
-      
-      **REAL LIFE EXAMPLE:** It's like planting a small mango seed today. You can't expect sweet mangoes next month, but if you keep watering it regularly, in a few years it'll yield bountiful fruits every single season.
-      
-      **PRO TIP:** Do not get trapped in "get rich quick" crypto schemes or premium option trading hacks. Start a simple monthly recurring deposit or mutual fund SIP to build the saving muscle first.
-      
-      If you want, tell me a real number and a timeframe — even a rough one (like "buy a laptop worth 55k in 18 months") — and I'll build you an actual, concrete plan instead of just talking in general terms!`,
+      is_type_b: false,
+      type_b_response: "",
       target_amount: 0,
       timeframe_months: 0,
-      goal_summary: "Let's talk about building real wealth 🌱",
-      plays: [],
-      closing_summary: ""
-    };
-  }
-
-  if (isPureExplainer) {
-    const topic = calculationsContext.explainer_topic || "general";
-    if (topic === "mutual fund" || topic === "sip") {
-      return {
-        target_amount: 0,
-        timeframe_months: 12,
-        goal_summary: "Paisa Coach Explains: Mutual Funds & SIPs 📈",
-        plays: [
-          {
-            title: "What is a Mutual Fund & SIP, anyway? 🎒",
-            risk: "Medium risk",
-            description: `**THE PLAN:** A Mutual Fund pools money from thousands of savers to invest in a balanced basket of stocks or bonds chosen by professionals. An SIP (Systematic Investment Plan) is simply you investing a fixed, small amount of your pocket money into this fund every single month to build wealth over time.
-
-**THE MATH:** If you start an SIP of ₹1,000 every month at an illustrative 12% annual rate across 5 years (60 months), your total investment is ₹60,000. Through monthly compound interest growth, this pool safely compounds to roughly ₹82,500 by maturity.
-
-**REAL LIFE EXAMPLE:** It's exactly like putting aside the price of one medium pizza or a standard coffee every month and letting it grow in a golden vault instead of spending it on impulse snacks.
-
-**PRO TIP:** Set up an automatic bank mandate the day right after you get your allowance! If you try to save whatever is left at the end of the month, you will end up saving nothing—automatic saving is the real cheat code.`,
-            timeframe_label: "Explainer",
-            option_label: "Paisa Coach Explains",
-            beginner_tip: `if you're brand new: ${guardianTip} to explore index mutual funds.`
-          }
-        ]
-      };
-    } else if (topic === "stocks") {
-      return {
-        target_amount: 0,
-        timeframe_months: 12,
-        goal_summary: "Paisa Coach Explains: Direct Stocks 📊",
-        plays: [
-          {
-            title: "Understanding Stocks: Owning pieces of companies 🏢",
-            risk: "High risk",
-            description: `**THE PLAN:** Buying a stock means you bought a tiny, real fractional share of a public company like Tata or Reliance. If the company makes stellar products and expands, your share value rallies; if they struggle or make poor business choices, your capital drops.
-
-**THE MATH:** If you buy ₹10,000 worth of direct shares in a single tech stock and it grows at 18% p.a. for 3 years, your money expands to ₹16,430. But if that business fails and the stock drops by 40%, your savings collapse to ₹6,000 instantly with no fallback protection.
-
-**REAL LIFE EXAMPLE:** Think of it like buying direct bricks of your favorite sweet shop; if they open more successful branches you get richer, but if a better competitor opens next door, your brick value drops.
-
-**PRO TIP:** Please do not treat stock trading like a standard mobile video game. Direct stocks can experience brutal daily price swings, so as your older sibling, I suggest holding off until you understand how to read balance sheets, starting with safer mutual funds instead.`,
-            timeframe_label: "Explainer",
-            option_label: "Paisa Coach Explains",
-            beginner_tip: `if you're brand new: ${guardianTip} to try mock-trading first before putting real money in.`
-          }
-        ]
-      };
-    } else if (topic === "bitcoin" || topic === "crypto") {
-      return {
-        target_amount: 0,
-        timeframe_months: 12,
-        goal_summary: "Paisa Coach Explains: Crypto & Bitcoin 🪙",
-        plays: [
-          {
-            title: "Bitcoin and Crypto: High-voltage digital assets ⚡",
-            risk: "High risk",
-            description: `**THE PLAN:** Cryptocurrencies are highly volatile digital tokens whose prices rely purely on global internet hype and market speculation waves. Unlike real companies, they have no physical assets, pay no regular dividends, and have absolutely no safety protection from SEBI.
-
-**THE MATH:** If you invest ₹5,000 in a trending crypto token, and it rallies on social media hypes by 300%, your capital reaches ₹20,000. But if a major exchange goes bust, the token can drop by 95% in one day, melting your savings to an irreversible ₹250.
-
-**REAL LIFE EXAMPLE:** It is like trading extremely rare digital collectors' cards where prices swing 30% depending on a single daily online post by a famous celebrity.
-
-**PRO TIP:** Be extremely careful: never buy crypto with funds you actually need for your studies or essential items. Treat it as high-octane speculative play money, and never make it your core savings goal!`,
-            timeframe_label: "Explainer",
-            option_label: "Paisa Coach Explains",
-            beginner_tip: "if you're brand new: Ensure you understand that you can lose 100% of your crypto capital overnight."
-          }
-        ]
-      };
-    } else if (topic === "double money") {
-      return {
-        target_amount: 0,
-        timeframe_months: 12,
-        goal_summary: "Paisa Coach Explains: How to Double Your Money 💸",
-        plays: [
-          {
-            title: "The Magic 'Rule of 72' 🎩",
-            risk: "Medium risk",
-            description: `**THE PLAN:** Doubling your money is the result of compound interest working over time, which you can estimate using the "Rule of 72". By dividing 72 by your expected annual interest rate, you get the exact number of years needed to double your wealth.
-
-**THE MATH:** If you invest in a completely safe bank deposit earning a reliable 8% per year, your fund doubles in exactly 72 ÷ 8 = 9.00 years. If you invest in a diversified growth fund aiming for a volatile 12% per year, it takes roughly 72 ÷ 12 = 6.00 years.
-
-**REAL LIFE EXAMPLE:** It is like planting a small fruit seed, then watering it regularly with steady monthly deposits, and watching it double into a steady tree over several years.
-
-**PRO TIP:** If any online guru or Telegram group promises to double your hard-earned money in 30 days, run as fast as you can. They are running classic Ponzi scams, and real wealth takes slow, steady compounding to double safely!`,
-            timeframe_label: "Explainer",
-            option_label: "Paisa Coach Explains",
-            beginner_tip: "if you're brand new: Start tracking compound interest formulas inside our calculator to see the magic of time."
-          }
-        ]
-      };
-    } else if (topic === "ppf" || topic === "ssy" || topic === "tax") {
-      return {
-        target_amount: 0,
-        timeframe_months: 12,
-        goal_summary: "Paisa Coach Explains: Government Schemes 🇮🇳",
-        plays: [
-          {
-            title: "PPF & SSY: Safe Government Super-Vaults 🛡️",
-            risk: "Low risk",
-            description: `**THE PLAN:** PPF (Public Provident Fund) and SSY (Sukanya Samriddhi Yojana) are sovereign, risk-free savings accounts provided by the Government of India. They offer guaranteed compounding returns and tax-free interest, making them incredibly safe for long-term horizons.
-
-**THE MATH:** Investing ₹10,000 every year in a PPF account at a government-fixed annual interest yield of ~7.1% p.a. compounded annually for 15 years aggregates a principal of ₹1,50,000, compounding to roughly ₹2,71,000 at maturity.
-
-**REAL LIFE EXAMPLE:** Think of this like putting your money in a massive, titanium state-backed vault that is completely shielded from any storm, stock crash, or market correction.
-
-**PRO TIP:** Because PPF has a strict 15-year lock-in period, do not put your pocket money in here if you want to buy a laptop next year. It is perfect for long-term targets, but terrible if you need quick spending cash!`,
-            timeframe_label: "Explainer",
-            option_label: "Paisa Coach Explains",
-            beginner_tip: "if you're brand new: PPF accounts can be opened at any public bank (SBI, PNB) or post office branch."
-          }
-        ]
-      };
-    } else {
-      return {
-        target_amount: 0,
-        timeframe_months: 12,
-        goal_summary: "Paisa Coach Explains: Smart Budgeting 🪙",
-        plays: [
-          {
-            title: "General Wisdom: The golden 50-30-20 rule 🎒",
-            risk: "Low risk",
-            description: `**THE PLAN:** Budgeting is separating your income or pocket allowance on day one using the "50-30-20 rule". You split resources into three vaults: 50% for your absolute needs, 30% for your personal wants, and 20% for direct savings.
-
-**THE MATH:** If your pocket money is ₹10,000, you spend ₹5,000 on needs (travel/lunch), allocate ₹3,000 for wants (movies/outings), and save ₹2,000 immediately. Over 12 months, that 20% savings habit accumulates a solid ₹24,000 flat, even before earning bank interest.
-
-**REAL LIFE EXAMPLE:** It is like packing your bag the night before school—by saving that 20% the moment you get paid, you make sure you don't spend it on impulse shopping by week two.
-
-**PRO TIP:** Open a separate banking sub-wallet or a zero-balance account just for your savings stack. Keeping all your holiday and lunch cash in the same wallet makes it extremely easy to accidentally spend your savings on an impulse sale!`,
-            timeframe_label: "Explainer",
-            option_label: "Paisa Coach Explains",
-            beginner_tip: "if you're brand new: Open a separate sub-wallet inside your banking app to stash away your 20% on pocket money day."
-          }
-        ]
-      };
-    }
-  }
-
-  if (isGapCase && statedP) {
-    const { flat_total, shortfall, required_annual_rate_pct, alt_A_req_deposit_at_7pct, alt_B_req_months_at_7pct, alt_B_actual_fv, alt_C_fv_at_15pct_sip } = calculationsContext;
-    const summary = calculationsContext.used_stored_profile_savings 
-      ? `Since you have about ₹${statedP.toLocaleString('en-IN')} left over each month based on your profile, here is your gap report to reach ₹${target.toLocaleString('en-IN')}!`
-      : `Resolve gap to hit ₹${target.toLocaleString('en-IN')} utilizing ₹${statedP.toLocaleString('en-IN')}/month saving rate`;
-
-    return {
-      target_amount: target,
-      timeframe_months: months,
-      goal_summary: summary,
+      goal_summary: `Monthly Budget Split: Allocating your ₹${formatRupeeValue(inc)} income 📊`,
       plays: [
         {
-          title: "Gap Reality Check 🚨",
-          risk: "Low risk",
-          description: `**THE PLAN:** Right now, saving ₹${statedP.toLocaleString('en-IN')}/month in flat cash gets you exactly ₹${flat_total.toLocaleString('en-IN')} flat by month ${months}. Because uninvested cash has no growth, your target of ₹${target.toLocaleString('en-IN')} leaves a real gap shortfall of ₹${shortfall.toLocaleString('en-IN')}.
-
-**THE MATH:** To turn ₹${flat_total.toLocaleString('en-IN')} into ₹${target.toLocaleString('en-IN')} inside ${months} months using compounding alone, you would need an annual return rate of roughly ${required_annual_rate_pct}%. Since risk-free bank deposits only offer around 7% per year, it is mathematically impossible to close this gap safely using interest growth alone.
-
-**REAL LIFE EXAMPLE:** This ₹${shortfall.toLocaleString('en-IN')} gap represents a serious chunk of capital—it is like expecting a small piggy bank to magically multiply its coins on its own overnight.
-
-**PRO TIP:** Look, this is the most common financial reality check we all face: expecting interest or markets to miraculously do the heavy lifting of saving on short timelines. Since interest alone won't work, we must either scale up our monthly deposits or extend our timeline to match reality, which is completely fine!`,
-          timeframe_label: `${months} months`,
-          option_label: "option 1",
-          beginner_tip: "if you're brand new: Use the gap reality report to re-budget your current expenses."
+          title: `50% Needs: Essential Living (₹${formatRupeeValue(needs)}/month)`,
+          risk: "Low risk (No market exposure)",
+          description: "",
+          the_plan: `Allocate half of your ₹${formatRupeeValue(inc)} income to absolute essentials like rent, groceries, transport, utilities, and debt payments.`,
+          the_math: `50% of ₹${formatRupeeValue(inc)} = ₹${formatRupeeValue(needs)}. Under the classic 50-30-20 rule, this ensures you cover your livelihood reliably without high-stress compromises.`,
+          real_life_example: `It's like paying for your room and power bills first, so you are always safe and secure before spending money on fancy lifestyle upgrades.`,
+          pro_tip: `Transfer this essential budget to a separate bank account right on payday to avoid accidentally dipping into bill money for entertainment!`,
+          timeframe_label: "Monthly",
+          option_label: "Needs",
+          beginner_tip: "Open a zero-balance secondary bank account for managing all monthly bill auto-debits."
         },
         {
-          title: "Alternative A: Scale Monthly Savings 🏋️",
-          risk: "Low risk",
-          description: `**THE PLAN:** Scale up your monthly deposit amount and secure it using a bank RD (Recurring Deposit, which means putting aside a fixed sum monthly). An RD is a risk-free banking product that compounds quarterly, locking your fixed rate and protecting your capital from market swings.
-
-**THE MATH:** By saving ₹${alt_A_req_deposit_at_7pct.toLocaleString('en-IN')} every single month for ${months} months in a secure RD compounding quarterly at ~7.0% per year, you will contribute a principal of ₹${(alt_A_req_deposit_at_7pct * months).toLocaleString('en-IN')}, earning compound interest to safely hit exactly ₹${target.toLocaleString('en-IN')}.
-
-**REAL LIFE EXAMPLE:** Look at it as scaling your daily savings habit from a cup of sweet tea to skipping one premium takeout meal each week to feed your goal.
-
-**PRO TIP:** Believe me, stretching your saving capacity is tough, but it forces you to build incredible budget discipline. Setup an auto-debit for this scaled amount the moment your monthly allowance drops, and watch your goal become 100% guaranteed.`,
-          timeframe_label: `${months} months`,
-          option_label: "option 2",
-          beginner_tip: `if you're brand new: ${guardianTip} to open an RD auto-debit inside net banking.`
+          title: `30% Wants: Guilt-Free Lifestyle (₹${formatRupeeValue(wants)}/month)`,
+          risk: "Low risk (Zero market risk)",
+          description: "",
+          the_plan: `Allocate 30% of your earnings to personal wants, including shopping, dining out, streaming, movie tickets, and hobbies.`,
+          the_math: `30% of ₹${formatRupeeValue(inc)} = ₹${formatRupeeValue(wants)}. Keeping lifestyle spending isolated is essential to prevent lifestyle inflation.`,
+          real_life_example: `It's your direct fun vault. You can buy sneakers or hang out with friends guilt-free, knowing you are strictly budgeted.`,
+          pro_tip: `Keep your weekly wants budget in cash or a separate digital wallet. When it runs out, stop spending until the next month!`,
+          timeframe_label: "Monthly",
+          option_label: "Wants",
+          beginner_tip: "Use a mobile banking sub-wallet or credit limit control to hard cap your weekend spending."
         },
         {
-          title: "Alternative B: Extend Timeframe ⏳",
-          risk: "Low risk",
-          description: `**THE PLAN:** Keep your secure and comfortable contribution rate of ₹${statedP.toLocaleString('en-IN')}/month, but extend your timeline. By giving your money more months to compound, you let time do the work without overstretching your daily pocket budgets.
-
-**THE MATH:** Depositing ₹${statedP.toLocaleString('en-IN')} every single month for exactly ${alt_B_req_months_at_7pct} months into a bank RD (Recurring Deposit) compounding quarterly at ~7.0% per year safely compounds to a total of ₹${alt_B_actual_fv.toLocaleString('en-IN')}, crossing your target of ₹${target.toLocaleString('en-IN')} with absolute mathematical safety.
-
-**REAL LIFE EXAMPLE:** Think of it like taking a local bus instead of an expensive high-speed train; you will still arrive at your exact destination safely, you just enjoy the journey for a few more months.
-
-**PRO TIP:** Patient wealth is permanent wealth, buddy. If you rush and force a short timeline, you might be tempted to gamble in risky speculative markets; extending your timeline is the ultimate protective move to keep your money safe.`,
-          timeframe_label: `${alt_B_req_months_at_7pct} months`,
-          option_label: "option 3",
-          beginner_tip: "if you're brand new: Slowing down and extending your timeline is always smarter than over-leveraging."
-        },
-        {
-          title: "Alternative C: Growth Seekers Market SIP 📈",
-          risk: "High risk",
-          description: `**THE PLAN:** Keep your contribution rate at ₹${statedP.toLocaleString('en-IN')}/month but redirect it to a market-linked Equity Mutual Fund through an SIP (Systematic Investment Plan). This invests your money into shares of diverse top companies to target higher growth, but has no government guarantees.
-
-**THE MATH:** Depositing ₹${statedP.toLocaleString('en-IN')} monthly for ${months} months in an equity index fund assuming an illustrative and volatile historical CAGR (Compound Annual Growth Rate) of 15% would hypothetically reach ~₹${alt_C_fv_at_15pct_sip.toLocaleString('en-IN')}. Bear in mind that equity markets can drop 10-20% quickly, meaning your final maturity can sit well below your principal.
-
-**REAL LIFE EXAMPLE:** It is like boarding a high-speed roller coaster—it can shoot you to the summit early, or experience a sudden steep drop right before you decide to get off.
-
-**PRO TIP:** Please be extremely careful here: if you need this money for something critical like college fees or a laptop in just ${months} months, do NOT put it in equity. A sudden market correction right when you need to purchase your item could wipe out your plans, so stay safe!`,
-          timeframe_label: `${months} months`,
-          option_label: "option 4",
-          beginner_tip: `if you're brand new: ${guardianTip} to safely manage mutual fund equity SIPs.`
+          title: `20% Savings & Wealth Building (₹${formatRupeeValue(savings)}/month)`,
+          risk: "Medium risk (Asset-allocation balanced)",
+          description: "",
+          the_plan: `Direct the final 20% of your income to wealth-building options like Post Office RD or low-risk mutual fund SIPs.`,
+          the_math: `20% of ₹${formatRupeeValue(inc)} = ₹${formatRupeeValue(savings)}. Stashing ₹${formatRupeeValue(savings)}/month builds massive secure growth.`,
+          real_life_example: `Think of this as planting ₹${formatRupeeValue(savings)} mango seeds every month. In a few years, they grow into a steady orchard yielding bountiful financial freedom!`,
+          pro_tip: `Automate this transfer on day one. Saving first, rather than saving what is left at the end of the month, is the golden cheat code of wealth.`,
+          timeframe_label: "Accumulating",
+          option_label: "Savings",
+          beginner_tip: "Set up an automatic bank mandate to sweep this sum into a secure investment the day after payday."
         }
       ],
-      closing_summary: `Bottom line: stick to Alternative A (Scale Monthly Savings) and put in ₹${alt_A_req_deposit_at_7pct.toLocaleString('en-IN')}/month in a secure bank RD without skipping — do that consistently for ${months} months and you'll have your ${goal_item} sorted, no surprises, no risk. You've got this.`
-    };
-  } else {
-    const { ideal_monthly, rd_fv_at_7pct, rd_profit, hybrid_fv, hybrid_safe_part, hybrid_risk_part, sprint_months, sprint_monthly } = calculationsContext;
-    const summary = (calculationsContext.used_stored_profile_savings && statedP)
-      ? `Since you have about ₹${statedP.toLocaleString('en-IN')} left over each month based on your onboarding profile, here is how that plays out to hit ₹${target.toLocaleString('en-IN')} in ${months} months!`
-      : `Your blueprint to accumulate ₹${target.toLocaleString('en-IN')} in ${months} months`;
-
-    return {
-      target_amount: target,
-      timeframe_months: months,
-      goal_summary: summary,
-      plays: [
-        {
-          title: "Simple Monthly Savings Account 🏦",
-          risk: "Low risk",
-          description: `**THE PLAN:** Create a dedicated savings partition inside a standard bank savings account and commit to depositing your monthly target. This is a low-risk, highly accessible liquid route that gives you total freedom to withdraw funds instantly.
-
-**THE MATH:** Stashing ₹${ideal_monthly.toLocaleString('en-IN')} every month for ${months} months in a basic savings account yielding ~3.5% p.a. compounded monthly will build to a final total of approximately ₹${target.toLocaleString('en-IN')} by maturity, consisting almost entirely of your hard-earned principal.
-
-**REAL LIFE EXAMPLE:** It is like setting up a basic digital piggy bank inside your main mobile app to separate your shopping funds from your goal cash.
-
-**PRO TIP:** While the high liquidity means you can withdraw the cash in ten seconds, it also means you will be tempted to spend it on impulse shoes or weekend parties. Set up a dedicated sub-account and throw away the debit card to protect yourself from yourself!`,
-          timeframe_label: `${months} months`,
-          option_label: "option 1",
-          beginner_tip: "if you're brand new: Open a separate savings sub-wallet so you don't accidentally spend it."
-        },
-        {
-          title: "RD Vault Lock-In 🔒",
-          risk: "Low risk",
-          description: `**THE PLAN:** Put your deposits inside a bank RD (Recurring Deposit, where you save a fixed amount quarterly-compounded). An RD is a risk-free fixed income tool compounding quarterly, locking your money away until maturity to enforce airtight savings discipline.
-
-**THE MATH:** Depositing the same ₹${ideal_monthly.toLocaleString('en-IN')} every single month for ${months} months into a secure bank RD compounding quarterly at ~7.0% per year yields ₹${rd_profit.toLocaleString('en-IN')} in pure interest profit, reaching a guaranteed maturity of ₹${rd_fv_at_7pct.toLocaleString('en-IN')}.
-
-**REAL LIFE EXAMPLE:** Think of it like a smart locker that holds onto your movie ticket money and gives you back a free soda and popcorn at the exit gate for being disciplined.
-
-**PRO TIP:** This is my personal absolute favorite for short-term goals. Because banks penalize you slightly for premature withdrawals, it acts as a healthy mental barrier that stops you from breaking your savings goal to buy temporary impulse goodies.`,
-          timeframe_label: `${months} months`,
-          option_label: "option 2",
-          beginner_tip: "if you're brand new: RDs block you from touching the money until the end, protecting you from buying impulse items."
-        },
-        {
-          title: "80/20 Safe & Sparkly Hybrid ⚖️",
-          risk: "Medium risk",
-          description: `**THE PLAN:** Distribute your savings into two separate buckets: 80% stays completely safe in a bank RD (Recurring Deposit), while 20% is directed into an equity Mutual Fund via an SIP (Systematic Investment Plan, representing steady market-linked payments) to capture higher stock market growth.
-
-**THE MATH:** Out of your monthly budget, ₹${hybrid_safe_part.toLocaleString('en-IN')}/month compounds safely in a 7% bank RD, while ₹${hybrid_risk_part.toLocaleString('en-IN')}/month goes to a diversified Large-Cap Equity SIP targeting an illustrative 11% p.a. CAGR. By month ${months}, you aim to accumulate ₹${hybrid_fv.toLocaleString('en-IN')} total, blending guaranteed protection with market potential.
-
-**REAL LIFE EXAMPLE:** It is like keeping 80% of your pocket allowance in your wallet for lunch, while spending 20% on a premium raffle ticket with a great chance to win a hamper.
-
-**PRO TIP:** This is an excellent way to dip your toes into the stock market without losing sleep. Even if the equity market hits a rough patch, your core 80% bank vault keeps growing safely, protecting your underlying goal from crashing.`,
-          timeframe_label: `${months} months`,
-          option_label: "option 3",
-          beginner_tip: `if you're brand new: ${guardianTip} to safely manage mutual fund equity SIPs.`
-        },
-        {
-          title: "Intense Challenge Sprint 🏃‍♂️",
-          risk: "Medium risk",
-          description: `**THE PLAN:** Push your monthly budget limits and target an intense saving sprint over a shorter timeframe. By locking down non-essential spends, you can hit your final goal early and buy your item weeks before schedule.
-
-**THE MATH:** Depositing a boosted ₹${sprint_monthly.toLocaleString('en-IN')} every month for a shortened period of just ${sprint_months} months into a secure bank RD (Recurring Deposit) compounding quarterly at ~7.0% per year will compound to cross your target of ₹${target.toLocaleString('en-IN')} early.
-
-**REAL LIFE EXAMPLE:** It is like pulling an all-nighter to finish your college assignment early so you can enjoy the rest of the weekend with zero stress.
-
-**PRO TIP:** Try this only if you have massive short-term motivation and can cut out luxury dining or premium streaming subscriptions for a brief period. Reaching your goal early feels absolutely electric, and once you buy your item, you will be hooked on saving!`,
-          timeframe_label: `${sprint_months} months`,
-          option_label: "option 4",
-          beginner_tip: "if you're brand new: Only choose sprint mode if you can temporarily cut down all eating out or subscription pocket money costs."
-        }
-      ],
-      closing_summary: `Bottom line: stick to Option 2 (the RD Vault) and put in ₹${ideal_monthly.toLocaleString('en-IN')}/month without skipping — do that consistently for ${months} months and you'll have your ${goal_item} sorted, no surprises, no risk. You've got this.`
+      closing_summary: `Self-Check: The user's classified intent is A. The number(s) they gave are: ₹${formatRupeeValue(inc)} (monthly income). I am NOT introducing any number they didn't provide.\n\n` +
+        `By dividing your ₹${formatRupeeValue(inc)} monthly income into ₹${formatRupeeValue(needs)} (Needs), ₹${formatRupeeValue(wants)} (Wants), and ₹${formatRupeeValue(savings)} (Savings), you establish a robust, sustainable personal finance structure with zero unrequested goal figures or shortfalls.\n\n` +
+        `Rates shown are as of July 2026 — confirm before investing, as they're revised quarterly by RBI/Govt of India.`
     };
   }
+
+  if (category === 'C') {
+    const lSum = lumpSum || 15000;
+    const tfMonths = timeframeMonths || 12;
+    
+    // FD Compounding (quarterly)
+    const fdMaturity = roundTo10(lSum * Math.pow(1 + rates.bankRD / 400, (tfMonths / 12) * 4));
+    // Debt Mutual Fund (monthly)
+    const debtMaturity = roundTo10(lSum * Math.pow(1 + rates.debtFund / 1200, tfMonths));
+    // Equity Index Mutual Fund (monthly)
+    const equityMaturity = roundTo10(lSum * Math.pow(1 + rates.equityFund / 1200, tfMonths));
+
+    const durationText = tfMonths >= 12
+      ? `${(tfMonths / 12).toFixed(1).replace(/\.0$/, '')} years`
+      : `${tfMonths} months`;
+
+    const mathFD = `You currently have ₹${formatRupeeValue(lSum)}. If you lock this capital in this Bank FD at the current ${rates.bankRD.toFixed(2)}% p.a. interest rate, your final amount in hand after ${durationText} will be exactly ₹${formatRupeeValue(fdMaturity)} — this grows your principal by exactly ₹${formatRupeeValue(fdMaturity - lSum)}.`;
+
+    const mathDebt = `You currently have ₹${formatRupeeValue(lSum)}. If you invest this capital in this Debt Mutual Fund at ${rates.debtFund.toFixed(2)}% p.a., your final amount in hand after ${durationText} will be exactly ₹${formatRupeeValue(debtMaturity)} — this grows your principal by exactly ₹${formatRupeeValue(debtMaturity - lSum)}.`;
+
+    const mathEquity = `You currently have ₹${formatRupeeValue(lSum)}. If you invest this capital in this Equity Index Fund at ${rates.equityFund.toFixed(2)}% p.a., your final amount in hand after ${durationText} will be exactly ₹${formatRupeeValue(equityMaturity)} — this grows your principal by exactly ₹${formatRupeeValue(equityMaturity - lSum)}.`;
+
+    const rateHighLow = 15;
+    const rateHighHigh = 25;
+    const grownLumpSumHighLow = lSum > 0 ? roundTo10(lSum * Math.pow(1 + rateHighLow / 1200, tfMonths)) : 0;
+    const grownLumpSumHighHigh = lSum > 0 ? roundTo10(lSum * Math.pow(1 + rateHighHigh / 1200, tfMonths)) : 0;
+    
+    const mathHigh = `You currently have ₹${formatRupeeValue(lSum)}. If you invest this capital in Direct Stocks/Small-Cap Funds at historically variable rates, your final amount after ${durationText} could grow to approximately ₹${formatRupeeValue(grownLumpSumHighLow)} - ₹${formatRupeeValue(grownLumpSumHighHigh)} depending on market performance. However, you could also face significant losses (30-50%) in downturns.`;
+
+    return {
+      is_type_b: false,
+      type_b_response: "",
+      target_amount: lSum,
+      timeframe_months: tfMonths,
+      goal_summary: `Lump Sum Deployment: Investing ₹${formatRupeeValue(lSum)} safely 🛡️`,
+      plays: [
+        {
+          title: `Option 1: Bank Fixed Deposit (FD) 🏦 [DICGC Insured]`,
+          risk: "LOW RISK (GUARANTEED)",
+          description: "Guaranteed returns with zero risk of capital loss, DICGC insured.",
+          the_plan: `Deploy your ₹${formatRupeeValue(lSum)} capital into a Bank Fixed Deposit with a major Indian bank (e.g., SBI/HDFC) to secure absolute risk-free compound interest.`,
+          the_math: mathFD,
+          real_life_example: `It's like placing your cash inside a secure bank vault. It stays completely safe from stock market crashes and grows steadily.`,
+          pro_tip: `FDs charge a small fee for premature withdrawal. Only lock up money that you do not need immediately to maximize your interest yield!`,
+          timeframe_label: `${tfMonths} months`,
+          option_label: "Option 1 (FD)",
+          beginner_tip: "You can book this FD instantly with a single tap inside your bank's mobile app."
+        },
+        {
+          title: `Option 2: Debt Mutual Fund ⚖️ [High Liquidity]`,
+          risk: "MEDIUM RISK (MARKET-LINKED)",
+          description: "Moderate returns with low-volatility debt asset allocation, suitable for conservative growth.",
+          the_plan: `Allocate your ₹${formatRupeeValue(lSum)} into a low-duration or liquid debt mutual fund for tax-efficient returns and higher yields than a savings account.`,
+          the_math: mathDebt,
+          real_life_example: `It is like lending your surplus capital to major blue-chip Indian corporations who pay you a steady premium return as thank-you interest.`,
+          pro_tip: `Debt funds are highly liquid with zero lock-in, but remember that returns are market-linked and are NOT government guaranteed!`,
+          timeframe_label: `${tfMonths} months`,
+          option_label: "Option 2 (Debt Fund)",
+          beginner_tip: "Use any mutual fund investment app to deploy your idle capital into a high-grade debt fund."
+        },
+        {
+          title: `Option 3: Equity Index Mutual Fund 📈 [Aggressive Growth]`,
+          risk: "GROWTH RISK (MARKET-LINKED, VOLATILE)",
+          description: "Highest long-term growth potential through the Indian stock market, but subject to high short-term volatility.",
+          the_plan: `Invest your ₹${formatRupeeValue(lSum)} lump sum into a diversified Equity Index Fund (like Nifty 50) for premium compounded growth.`,
+          the_math: mathEquity,
+          real_life_example: `Think of this as buying a piece of India's business landscape. It offers incredible wealth expansion over time, but prepare for market ups and downs.`,
+          pro_tip: `Equity investments should be held for at least 3 to 5 years to ride out any short-term market crashes!`,
+          timeframe_label: `${tfMonths} months`,
+          option_label: "Option 3 (Equity Index)",
+          beginner_tip: "Open a mutual fund account and buy a low-cost direct index fund to avoid broker commissions."
+        },
+        {
+          title: "Option 4: Direct Stocks & Crypto 🚀 [Speculative / High Risk]",
+          risk: "VERY HIGH RISK (SPECULATIVE — CAPITAL AT RISK)",
+          description: "High speculative potential with no fixed returns. Can suffer from massive drawdowns and capital loss.",
+          the_plan: `Speculate your ₹${formatRupeeValue(lSum)} lump sum across direct small-cap equities, crypto, and thematic funds for aggressive upside.`,
+          the_math: mathHigh,
+          real_life_example: `It's like trying to launch a rocket ship. You could reach the moon rapidly, but the engines could also explode on the launchpad.`,
+          pro_tip: `Only deploy capital you are 100% prepared to lose entirely. Never rely on speculative assets for non-negotiable financial goals.`,
+          timeframe_label: `${tfMonths} months`,
+          option_label: "Option 4 (High Risk)",
+          beginner_tip: "Only experienced investors should actively pick highly volatile direct stocks or crypto."
+        }
+      ],
+      closing_summary: `Self-Check: The user's classified intent is C. The number(s) they gave are: ₹${formatRupeeValue(lSum)} (lump sum investment). I am NOT introducing any number they didn't provide.\n\n` +
+        `Deploying ₹${formatRupeeValue(lSum)} across Fixed Deposits, conservative debt mutual funds, or stock index funds allows you to match your risk appetite precisely.\n\n` +
+        `Rates shown are as of July 2026 — confirm before investing, as they're revised quarterly by RBI/Govt of India.`
+    };
+  }
+
+  if (category === 'B' && goalAmount) {
+    const target = goalAmount;
+    const tfMonths = timeframeMonths || 12;
+    const lSum = lumpSum || 0;
+    
+    // Grow lump sum over time to see what net target is remaining
+    // Grown using that tier's respective rate!
+    const grownLumpSumBank = lSum > 0 ? roundTo10(lSum * Math.pow(1 + rates.bankRD / 400, (tfMonths / 12) * 4)) : 0;
+    const grownLumpSumDebt = lSum > 0 ? roundTo10(lSum * Math.pow(1 + rates.debtFund / 1200, tfMonths)) : 0;
+    const grownLumpSumEquity = lSum > 0 ? roundTo10(lSum * Math.pow(1 + rates.equityFund / 1200, tfMonths)) : 0;
+    
+    const remainingTargetRD = Math.max(0, target - grownLumpSumBank);
+    const remainingTargetDebt = Math.max(0, target - grownLumpSumDebt);
+    const remainingTargetEquity = Math.max(0, target - grownLumpSumEquity);
+    
+    const monthlyRate = savingCapacity || 0;
+    const flatTotal = monthlyRate * tfMonths;
+    // Shortfall based on flat savings + initial lump sum
+    const shortfall = Math.max(0, target - lSum - flatTotal);
+
+    const requiredRD = roundTo10(calculateRD_Required(remainingTargetRD, rates.bankRD, tfMonths));
+    const requiredDebt = roundTo10(calculateSIP_Required(remainingTargetDebt, rates.debtFund, tfMonths));
+    const requiredSIP = roundTo10(calculateSIP_Required(remainingTargetEquity, rates.equityFund, tfMonths));
+
+    const lSumText = lSum > 0 ? ` with ₹${formatRupeeValue(lSum)} starting capital` : "";
+    const goalSummary = monthlyRate > 0
+      ? `At ₹${formatRupeeValue(monthlyRate)}/month, you'll save ₹${formatRupeeValue(flatTotal)} in ${tfMonths} months${lSumText} — your goal needs ₹${formatRupeeValue(target)}, a shortfall of ₹${formatRupeeValue(shortfall)}.`
+      : `With a goal of ₹${formatRupeeValue(target)} over ${tfMonths} months${lSumText}, here are the monthly investments required to reach it.`;
+
+    // Construct math segments that clearly output conversions:
+    const rdMaturityVal = roundTo10(calculateRD_FV(requiredRD, rates.bankRD, tfMonths));
+    const finalMaturityRD = roundTo10(grownLumpSumBank + rdMaturityVal);
+    const finalDiffRD = finalMaturityRD - target;
+    const compTextRD = finalDiffRD >= 0
+      ? `this fully covers your ₹${formatRupeeValue(target)} target with ₹${formatRupeeValue(finalDiffRD)} to spare`
+      : `this falls short of your ₹${formatRupeeValue(target)} target by ₹${formatRupeeValue(-finalDiffRD)}`;
+
+    const debtMaturityVal = roundTo10(calculateSIP_FV(requiredDebt, rates.debtFund, tfMonths));
+    const finalMaturityDebt = roundTo10(grownLumpSumDebt + debtMaturityVal);
+    const finalDiffDebt = finalMaturityDebt - target;
+    const compTextDebt = finalDiffDebt >= 0
+      ? `this fully covers your ₹${formatRupeeValue(target)} target with ₹${formatRupeeValue(finalDiffDebt)} to spare`
+      : `this falls short of your ₹${formatRupeeValue(target)} target by ₹${formatRupeeValue(-finalDiffDebt)}`;
+
+    const sipMaturityVal = roundTo10(calculateSIP_FV(requiredSIP, rates.equityFund, tfMonths));
+    const finalMaturitySIP = roundTo10(grownLumpSumEquity + sipMaturityVal);
+    const finalDiffSIP = finalMaturitySIP - target;
+    const compTextSIP = finalDiffSIP >= 0
+      ? `this fully covers your ₹${formatRupeeValue(target)} target with ₹${formatRupeeValue(finalDiffSIP)} to spare`
+      : `this falls short of your ₹${formatRupeeValue(target)} target by ₹${formatRupeeValue(-finalDiffSIP)}`;
+
+    const durationText = tfMonths >= 12
+      ? `${(tfMonths / 12).toFixed(1).replace(/\.0$/, '')} years`
+      : `${tfMonths} months`;
+
+    // For Option 4 (High risk speculative) we need ranges
+    const rateHighLow = 15;
+    const rateHighHigh = 25;
+    const grownLumpSumHighLow = lSum > 0 ? roundTo10(lSum * Math.pow(1 + rateHighLow / 1200, tfMonths)) : 0;
+    const grownLumpSumHighHigh = lSum > 0 ? roundTo10(lSum * Math.pow(1 + rateHighHigh / 1200, tfMonths)) : 0;
+    const highLowVal = roundTo10(calculateSIP_FV(monthlyRate, rateHighLow, tfMonths));
+    const highHighVal = roundTo10(calculateSIP_FV(monthlyRate, rateHighHigh, tfMonths));
+    const finalHighLow = roundTo10(grownLumpSumHighLow + highLowVal);
+    const finalHighHigh = roundTo10(grownLumpSumHighHigh + highHighVal);
+
+    // Calculate extended timelines using the helper functions
+    const extMonthsRD = calculateExtendedTimelineRD(target, lSum, monthlyRate, rates.bankRD);
+    const extMonthsDebt = calculateExtendedTimelineSIP(target, lSum, monthlyRate, rates.debtFund);
+    const extMonthsEquity = calculateExtendedTimelineSIP(target, lSum, monthlyRate, rates.equityFund);
+
+    const formatExt = (m: number) => {
+      if (m === 999) return "an infinite amount of time";
+      return m >= 12 ? `${(m / 12).toFixed(1).replace(/\.0$/, '')} years` : `${m} months`;
+    };
+
+    const bankRDMath = `You currently have ₹${formatRupeeValue(lSum)}. Your target is ₹${formatRupeeValue(target)}, leaving a shortfall of ₹${formatRupeeValue(target - lSum)}. If you invest in a Bank RD at ${rates.bankRD.toFixed(2)}% p.a. and continue depositing ₹${formatRupeeValue(monthlyRate)}/month, your final amount after ${durationText} will be ₹${formatRupeeValue(finalMaturityRD)} — ${compTextRD}.\n\nTo hit your exact target of ₹${formatRupeeValue(target)} in ${durationText}, you would instead need to deposit ₹${formatRupeeValue(requiredRD)}/month.\n\nAlternatively, if you'd rather keep depositing ₹${formatRupeeValue(monthlyRate)}/month, you would need to extend your timeline to approximately ${formatExt(extMonthsRD)} to reach ₹${formatRupeeValue(target)}.`;
+
+    const debtSIPMath = `You currently have ₹${formatRupeeValue(lSum)}. Your target is ₹${formatRupeeValue(target)}, leaving a shortfall of ₹${formatRupeeValue(target - lSum)}. If you invest in a Debt Mutual Fund at ${rates.debtFund.toFixed(2)}% p.a. and continue depositing ₹${formatRupeeValue(monthlyRate)}/month, your final amount after ${durationText} will be ₹${formatRupeeValue(finalMaturityDebt)} — ${compTextDebt}.\n\nTo hit your exact target of ₹${formatRupeeValue(target)} in ${durationText}, you would instead need to deposit ₹${formatRupeeValue(requiredDebt)}/month.\n\nAlternatively, if you'd rather keep depositing ₹${formatRupeeValue(monthlyRate)}/month, you would need to extend your timeline to approximately ${formatExt(extMonthsDebt)} to reach ₹${formatRupeeValue(target)}.`;
+
+    const equitySIPMath = `You currently have ₹${formatRupeeValue(lSum)}. Your target is ₹${formatRupeeValue(target)}, leaving a shortfall of ₹${formatRupeeValue(target - lSum)}. If you invest in an Equity Index Fund at ${rates.equityFund.toFixed(2)}% p.a. and continue depositing ₹${formatRupeeValue(monthlyRate)}/month, your final amount after ${durationText} will be ₹${formatRupeeValue(finalMaturitySIP)} — ${compTextSIP}.\n\nTo hit your exact target of ₹${formatRupeeValue(target)} in ${durationText}, you would instead need to deposit ₹${formatRupeeValue(requiredSIP)}/month.\n\nAlternatively, if you'd rather keep depositing ₹${formatRupeeValue(monthlyRate)}/month, you would need to extend your timeline to approximately ${formatExt(extMonthsEquity)} to reach ₹${formatRupeeValue(target)}.`;
+
+    const highRiskMath = `You currently have ₹${formatRupeeValue(lSum)}. Your target is ₹${formatRupeeValue(target)}, leaving a shortfall of ₹${formatRupeeValue(target - lSum)}. If you invest in Direct Stocks/Small-Cap Funds at historically variable rates and continue depositing ₹${formatRupeeValue(monthlyRate)}/month, your final amount after ${durationText} could grow to approximately ₹${formatRupeeValue(finalHighLow)} - ₹${formatRupeeValue(finalHighHigh)} depending on market performance. However, you could also face significant losses (30-50%) in downturns.`;
+
+    const selfCheckNumbers = lSum > 0
+      ? `₹${formatRupeeValue(target)} (target goal), ₹${formatRupeeValue(lSum)} (initial capital), and ${tfMonths} months (timeframe)`
+      : `₹${formatRupeeValue(target)} (target goal), ${tfMonths} months (timeframe), and ₹${formatRupeeValue(monthlyRate)}/month (current saving rate)`;
+
+    return {
+      is_type_b: false,
+      type_b_response: "",
+      target_amount: target,
+      timeframe_months: tfMonths,
+      goal_summary: goalSummary,
+      plays: [
+        {
+          title: "Option 1: Bank Recurring Deposit (RD) 🏦 [Risk-Free Vault]",
+          risk: "LOW RISK (GUARANTEED)",
+          description: "Guaranteed returns with zero risk of capital loss, DICGC insured.",
+          the_plan: lSum > 0
+            ? `Your ₹${formatRupeeValue(lSum)} starting capital will be safely parked in a Bank FD, while you set up a monthly Recurring Deposit (RD) to meet the remaining shortfall.`
+            : `Set up a monthly Recurring Deposit (RD) with a major bank (SBI/HDFC) to save a fixed amount quarterly-compounded with zero loss of principal.`,
+          the_math: bankRDMath,
+          real_life_example: `It is like locking your money in an automated vault that protects your savings from daily temptations and yields extra guaranteed reward coins.`,
+          pro_tip: `Because banks have a small penalty for premature closures, it acts as a healthy mental barrier that stops you from touching your savings until maturity!`,
+          timeframe_label: `${tfMonths} months`,
+          option_label: "Option 1 (RD)",
+          beginner_tip: "Easily set up an RD auto-debit inside your bank's mobile app to trigger right after pocket money day."
+        },
+        {
+          title: "Option 2: Debt Mutual Fund SIP ⚖️ [Balanced & Liquid]",
+          risk: "MEDIUM RISK (MARKET-LINKED)",
+          description: "Moderate returns with low-volatility debt asset allocation, suitable for conservative growth.",
+          the_plan: `Start a monthly Systematic Investment Plan (SIP) in a high-quality Debt Mutual Fund for stable, tax-efficient market gains to bridge your shortfall.`,
+          the_math: debtSIPMath,
+          real_life_example: `It is like letting top-tier Indian companies borrow your savings. They pay you a steady premium return higher than a bank while keeping volatility minimal.`,
+          pro_tip: `Debt mutual funds have zero lock-in and high liquidity, but keep in mind that returns are market-linked and NOT government guaranteed.`,
+          timeframe_label: `${tfMonths} months`,
+          option_label: "Option 2 (Debt SIP)",
+          beginner_tip: "Use any verified investment app to trigger an automated Debt Mutual Fund SIP."
+        },
+        {
+          title: "Option 3: Equity Index Mutual Fund SIP 📈 [Wealth Booster]",
+          risk: "GROWTH RISK (MARKET-LINKED, VOLATILE)",
+          description: "Highest long-term growth potential through the Indian stock market, but subject to high short-term volatility.",
+          the_plan: lSum > 0
+            ? `Grow your ₹${formatRupeeValue(lSum)} starting capital in high-equity assets while automating a systematic investment plan (SIP) for the remaining gap.`
+            : `Direct a monthly systematic investment of your savings into a diversified Equity Index Fund (like Nifty 50) for inflation-beating compound growth.`,
+          the_math: equitySIPMath,
+          real_life_example: `It's like boarding India's economic express train — it gets you to your financial destination incredibly fast, but expect volatile bumps along the tracks.`,
+          pro_tip: `Direct equity mutual funds are volatile and can drop in the short term. Only use equity for horizons longer than 3 years to avoid losses!`,
+          timeframe_label: `${tfMonths} months`,
+          option_label: "Option 3 (Equity SIP)",
+          beginner_tip: "Use any verified investment app to open a demat account and trigger an automatic index fund SIP."
+        },
+        {
+          title: "Option 4: Direct Stocks & Crypto 🚀 [Speculative / High Risk]",
+          risk: "VERY HIGH RISK (SPECULATIVE — CAPITAL AT RISK)",
+          description: "High speculative potential with no fixed returns. Can suffer from massive drawdowns and capital loss.",
+          the_plan: lSum > 0
+            ? `Allocate your ₹${formatRupeeValue(lSum)} into a high-volatility basket of small-cap stocks, crypto, or IPOs while setting up small SIPs.`
+            : `Speculate your monthly savings across direct small-cap equities, crypto, and thematic funds for aggressive upside.`,
+          the_math: highRiskMath,
+          real_life_example: `It's like trying to launch a rocket ship. You could reach the moon rapidly, but the engines could also explode on the launchpad.`,
+          pro_tip: `Only deploy capital you are 100% prepared to lose entirely. Never rely on speculative assets for non-negotiable financial goals.`,
+          timeframe_label: `${tfMonths} months`,
+          option_label: "Option 4 (High Risk)",
+          beginner_tip: "Only experienced investors should actively pick highly volatile direct stocks or crypto."
+        }
+      ],
+      closing_summary: `Self-Check: The user's classified intent is B. The number(s) they gave are: ${selfCheckNumbers}. I am NOT introducing any number they didn't provide.\n\n` +
+        `To reach your ₹${formatRupeeValue(target)} goal safely, we recommend utilizing high-grade bank RDs to close your monthly shortfall, or taking calculated index fund SIP market-linked risks if your timeline is long-term.\n\n` +
+        `Rates shown are as of July 2026 — confirm before investing, as they're revised quarterly by RBI/Govt of India.`
+    };
+  }
+
+  // category === 'D' (Ambiguous / Missing details)
+  const gAmt = goalAmount;
+  const missingLabel = gAmt 
+    ? `Hey buddy! I see you want to reach ₹${formatRupeeValue(gAmt)} in ${timeframeMonths} months, but I don't know your current monthly saving capacity. To give you an exact mathematical comparison and show your shortfall, let me know: how much can you comfortably save every month?`
+    : `Hey buddy! I see you mentioned ₹40,000, but I need a bit more details to clear things up! Did you mean **₹40,000 monthly income to split**, **₹40,000 savings goal to reach**, or **₹40,000 idle lump sum to invest safely**?`;
+
+  return {
+    is_type_b: false,
+    type_b_response: "",
+    target_amount: 0,
+    timeframe_months: 12,
+    goal_summary: "Wait, Paisa Coach needs a bit more details! 🎯🎒",
+    plays: [
+      {
+        title: "Wait, let's clear up the numbers! 🎯🎒",
+        risk: "Clarification needed",
+        description: "",
+        the_plan: `Let's clarify what your numbers represent before we calculate any compound interest, shortfall gap, or allocation metrics.`,
+        the_math: `No math can be performed until we define whether the stated figures represent your monthly income, your savings goal, or an idle lump sum capital.`,
+        real_life_example: `It's like having a treasure map but not knowing if we're planning a trip to the local grocery shop, a weekend holiday, or relocating to another city!`,
+        pro_tip: `Clear inputs lead to precise interest calculations. Take a second to specify your monthly saving rate or your goal context!`,
+        timeframe_label: "Clarify",
+        option_label: "Paisa Coach Qs",
+        beginner_tip: gAmt 
+          ? "Type something like: 'I want to save ₹40k, and my current savings rate is ₹2,000 a month' to clear this up!"
+          : "Type something like: 'I earn 40k freelancing, how to split it' or 'I have 15k idle to invest safely' to unlock your options right now!"
+      }
+    ],
+    closing_summary: `Self-Check: The user's classified intent is D (Ambiguous/Missing required info). The number(s) they gave are: ${gAmt ? `₹${formatRupeeValue(gAmt)} (goal amount)` : "unspecified numbers"}. I am NOT introducing any number they didn't provide.\n\n` +
+      `${missingLabel}\n\n` +
+      `Rates shown are as of July 2026 — confirm before investing, as they're revised quarterly by RBI/Govt of India.`
+  };
 }
 
 export async function handleGeneratePlans(req: any, res: any) {
-  let isPureExplainer = false;
-  let target = 15000;
-  let months = 12;
-  let statedP: number | null = null;
-  let explainerTopic = "general";
-  let calculationsContext: any = {};
-  let parsed: any = null;
-  const userAge = req.body.profile?.age || 18;
-
   try {
     const { goal, checkIn, profile } = req.body;
-
-    // --- STEP 1: Highly reliable Node.js/TypeScript-side extraction! ---
-    parsed = extractFinancialParameters(goal, checkIn, profile);
-    isPureExplainer = parsed.is_pure_explainer;
-    target = parsed.target_amount;
-    months = parsed.timeframe_months;
-    statedP = parsed.stated_monthly_savings;
-    explainerTopic = parsed.explainer_topic;
-
-    if (parsed.is_clarifying_needed) {
-      return res.json({
-        target_amount: 0,
-        timeframe_months: 12,
-        goal_summary: "Awaiting your numbers, buddy! 🎯",
-        plays: [
-          {
-            title: "Help Paisa Coach get started! 🎯🎒",
-            risk: "Low risk",
-            description: "Hey buddy! I'd love to build a detailed Indian investment blueprint path for you, but we are missing a few numbers (and your onboarding profile looks empty).\n\nTo unlock your specialized investment options, let me know: **what is your target amount** (e.g., ₹15,000 for a phone, or ₹40,000 for a laptop) and **how much can you comfortably save monthly**, or **when do you need it**? \n\nJust type it right here, and I will calculate your options and exact shortfall inline!",
-            timeframe_label: "Awaiting Info",
-            option_label: "Paisa Coach Qs",
-            beginner_tip: "if you're brand new: Type something like: 'Save ₹15,000 for a phone, and I save ₹1,000 a month' to unlock your options right now!"
-          }
-        ]
-      });
-    }
-
-    let isGapCase = false;
-
-    if (parsed.is_type_b) {
-      calculationsContext = {
-        is_type_b: true
-      };
-    } else if (!isPureExplainer) {
-      if (statedP !== null && statedP > 0) {
-        const bestSafeFv = calculateSIP_FV(statedP, 0.075, months);
-        if (bestSafeFv < target) {
-          isGapCase = true;
-        }
-      }
-
-      if (isGapCase && statedP) {
-        const flatTotal = statedP * months;
-        const shortfall = target - flatTotal;
-
-        // Solve for exact annual rate required
-        const reqAnnualRate = solveRequiredSIP_Rate(statedP, target, months);
-        
-        // Alternative A: Increase monthly deposit to hit target under a safe bank RD rate (7% p.a.)
-        const reqDepositSafe = calculateSIP_Required(target, 0.07, months);
-
-        // Alternative B: Extend timeframe to hit the target at current contribution and safe bank RD rate (7% p.a.)
-        const reqTimeframeMonths = solveMonthsRequired(statedP, target, 0.07);
-        const reqTimeframeFV = calculateSIP_FV(statedP, 0.07, reqTimeframeMonths);
-
-        // Alternative C: High-risk projection with SIP at 15% CAGR
-        const highRiskFV = calculateSIP_FV(statedP, 0.15, months);
-
-        calculationsContext = {
-          is_pure_explainer: false,
-          is_gap_case: true,
-          target_amount: target,
-          timeframe_months: months,
-          stated_P: statedP,
-          flat_total: flatTotal,
-          shortfall: shortfall,
-          required_annual_rate_pct: Math.round(reqAnnualRate * 100),
-          absolute_gap_pct: Math.round((shortfall / flatTotal) * 100),
-          alt_A_req_deposit_at_7pct: reqDepositSafe,
-          alt_B_req_months_at_7pct: reqTimeframeMonths,
-          alt_B_actual_fv: reqTimeframeFV,
-          alt_C_fv_at_15pct_sip: highRiskFV
-        };
-      } else {
-        // Standard Case (No gap/conflict between stated savings and goal)
-        const idealMonthly = Math.ceil(target / months);
-        
-        // Savings Account at 3.5%
-        const savingsFV = calculateSIP_FV(idealMonthly, 0.035, months);
-        const savingsProfit = savingsFV - (idealMonthly * months);
-
-        // Bank RD at 7.0%
-        const rdFV = calculateSIP_FV(idealMonthly, 0.07, months);
-        const rdProfit = rdFV - (idealMonthly * months);
-
-        // Hybrid split: 80% safe RD (7%), 20% equity SIP (12% p.a.)
-        const safePart = Math.round(idealMonthly * 0.8);
-        const riskPart = idealMonthly - safePart;
-        const hybridFV = calculateSIP_FV(safePart, 0.07, months) + calculateSIP_FV(riskPart, 0.12, months);
-
-        // Sprint mode
-        const sprintMonths = Math.max(3, Math.min(months, 3));
-        const sprintMonthly = Math.ceil(target / sprintMonths);
-
-        calculationsContext = {
-          is_pure_explainer: false,
-          is_gap_case: false,
-          target_amount: target,
-          timeframe_months: months,
-          ideal_monthly: idealMonthly,
-          savings_fv_at_3_5pct: savingsFV,
-          savings_profit: savingsProfit,
-          rd_fv_at_7pct: rdFV,
-          rd_profit: rdProfit,
-          hybrid_fv: hybridFV,
-          hybrid_safe_part: safePart,
-          hybrid_risk_part: riskPart,
-          sprint_months: sprintMonths,
-          sprint_monthly: sprintMonthly
-        };
-      }
-    } else {
-      // Pure Explainer calculations helper facts
-      const doubleYearsAt8 = 72 / 8;
-      const doubleYearsAt12 = 72 / 12;
-      
-      const sip1k_10years_12pct = calculateSIP_FV(1000, 0.12, 120);
-      const sip1k_10years_flat = 1000 * 120;
-      
-      calculationsContext = {
-        is_pure_explainer: true,
-        explainer_topic: explainerTopic,
-        double_years_at_8pct: doubleYearsAt8,
-        double_years_at_12pct: doubleYearsAt12,
-        sip_1k_10y_12pct_fv: sip1k_10years_12pct,
-        sip_1k_10y_flat: sip1k_10years_flat,
-        sip_1k_10y_profit: sip1k_10years_12pct - sip1k_10years_flat
-      };
-    }
-
-    calculationsContext.used_stored_profile_savings = parsed.used_stored_profile_savings;
-
-    // --- STEP 2: Unified SINGLE Gemini API Call with calculation injection ---
+    
+    // Lazy-initialize GoogleGenAI inside handler to ensure safety if key is missing/unstable
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.warn("No GEMINI_API_KEY configured. Falling back to dynamic local math-safe generator!");
-      const fb = getFallbackPlays(isPureExplainer, target, months, statedP, calculationsContext, userAge, parsed.goal_item);
-      if (fb && !('closing_summary' in fb)) {
-        fb.closing_summary = "";
-      }
+    const ai = apiKey
+      ? new GoogleGenAI({
+          apiKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            },
+          },
+        })
+      : null;
+
+    if (!ai) {
+      console.warn("[Paisa Coach] No GEMINI_API_KEY. Falling back to dynamic local offline parser.");
+      const fb = getLocalFallbackResponse(goal, checkIn, profile);
       return res.json(fb);
     }
 
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
+    console.log("[Paisa Coach] Processing query with Gemini Model for robust intent classification & math");
 
-    const systemInstruction = `You are "Paisa Coach" — an extremely knowledgeable, personalized Indian financial coaching assistant for personal finance questions from young Indian earners and savers.
-You help with any money question — investing a lump sum, starting a SIP, stock market planning, saving for a goal (trip, gadget, gift, gold, fees), budgeting freelance/salary income, or any other "what should I do with my money" questions. You are not limited to fixed scenarios — handle whatever the user actually asks with extreme care, high conversational warmth, and direct clarity.
+    // Prepare profile string to inject as context
+    const stored_income = checkIn?.monthlyIncome || 0;
+    const stored_spend = checkIn?.monthlySpend || 0;
+    const stored_surplus = Math.max(0, stored_income - stored_spend);
+    const userAge = profile?.age || 18;
 
-═══════════════════════════════
-THE HARD RULE (MISSING NUMBERS)
-═══════════════════════════════
-If a number (timeline, current savings, target, monthly surplus, expenses, or risk appetite) was not given to you by the user, you do NOT have it. Do NOT invent a figure, expense, timeline, or savings capacity that the user never stated.
-If the math needs a number you don't have, either:
-(a) Ask ONE direct question for the single most critical missing number, then stop and wait for the answer, OR
-(b) Clearly label it: "Since you haven't told me your monthly surplus/timeline, I'll show you the math for two realistic scenarios — adjust based on what's realistic for you."
-Never silently assume a figure and present it as if the user told you. Confirm: "What did they actually say vs. what would I be making up?"
+    const systemInstruction = `You are a financial goal-planning assistant for Pockit, an Indian personal finance app.
+Your task is to analyze the user's financial query, classify their intent, perform a required internal self-check, and generate a customized financial plan.
 
-═══════════════════════════════
-STEP 1 — PARSE BEFORE YOU ANSWER
-═══════════════════════════════
-Identify from the user's message:
-1. What money do they actually have, and in what form? (idle lump sum, regular monthly salary/freelance income, savings goal target amount)
-2. What do they want to do with it? (Invest a lump sum, start a SIP, stock market planning, save for a specific goal like a gadget / trip, manage freelance income budget)
-3. What is MISSING that you need real numbers for?
+CRITICAL: UNIT MULTIPLIERS (LAKH/CR/K) ARE MATHEMATICALLY MANDATORY
+If a user says "21 lakh" or similar, do NOT use the raw number 21 as if it were ₹21. This is a critical mathematical failure. You must extract (raw_number, unit_word) and apply the multiplier explicitly:
+- "k"/"K"/"thousand" -> multiply by 1,000 (e.g., 40k -> 40,000)
+- "lac"/"lakh"/"lakhs"/"L" -> multiply by 1,00,000 (e.g., 21 lakh -> 21,00,000; 70 lakh -> 70,00,000; 5L -> 5,00,000)
+- "cr"/"crore"/"crores" -> multiply by 1,00,00,000 (e.g., 1.2 cr -> 1,20,00,000)
+- no unit -> use exactly as given (e.g., 45000 -> 45,000)
 
-═══════════════════════════════
-STEP 2 — FORMULATE ROADMAP / math
-═══════════════════════════════
-Your response MUST always follow this structured flow:
-1. **Understanding Confirmation**: 1-2 sentence confirmation of what you understood they are asking (no fluff, clear).
-2. **The Roadmap/Plan**: Plain, direct steps with real, mathematically precise compound interest or allocations. Show your work briefly (plugging numbers in) so they can sanity-check.
-3. **Risk/Instrument Notes**: Clearly differentiate safe government-backed risk-free instruments from market-linked instruments. State lock-in periods clearly (PPF: 15 yrs, NSC: 5 yrs, SSY: until girl turns 21, Tax-saving FD: 5 yrs).
-4. **Disclaimer**: Finish with: "This is educational information, not personalised financial advice — for your specific situation, a SEBI-registered advisor can help."
+The converted_value — never the raw_number — is the ONLY value allowed to enter any calculation, "the_math" section, or final answer. The raw_number by itself must never appear in a calculation or in any text describing the mathematical result.
 
-═══════════════════════════════
-RATES & INSTRUMENTS DATABASE (June 2026 Verified)
-═══════════════════════════════
-Refer to these exact rates:
-- Savings account interest: ~3.0% to 3.5% p.a.
-- Bank Recurring Deposit (RD) / Fixed Deposit (FD): ~6.8% to 7.0% p.a. average (e.g., SBI/HDFC)
-- Post Office RD: ~6.7% p.a. (govt-fixed, revised quarterly)
-- Public Provident Fund (PPF): ~7.1% p.a., govt-fixed, revised quarterly, EEE tax-free (15 yrs lock-in)
-- National Savings Certificate (NSC): ~7.7% p.a., govt-fixed (5 yrs lock-in)
-- Sukanya Samriddhi Yojana (SSY): ~8.2% p.a. (for girl child under 10, govt-fixed, 21 yrs lock-in)
-- Senior Citizen Savings Scheme (SCSS): ~8.2% p.a.
-- Debt Mutual Funds: ~7.0% to 9.0% p.a. conservative historical average (market-linked, NOT guaranteed)
-- Equity Mutual Funds / SIP: ~10.0% to 12.0% p.a. index mutual funds long-term average, mid/small-cap ~12-16% but highly volatile (market-linked, NOT guaranteed, never promise returns for short spans)
+HARD VALIDATION GATE (BLOCK OUTPUT IF THIS FAILS):
+Confirm that the converted_value used in "the_plan" and "the_math" has at least 3-8 more digits than the raw_number (thousand = +3 digits, lakh = +5 digits, crore = +7 digits). If "the_plan" or "the_math" shows a Principal, goal, or capital figure that is IDENTICAL to the raw number the user typed (e.g. showing "₹21" or "P = ₹21" when the user said "21 lakh") — this is an automatic failure. RE-RUN STEP 1 AND STEP 2.
 
-═══════════════════════════════
-CORRECT CALCULATIONS CHEMISTRY
-═══════════════════════════════
-You must show calculations with precise numbers plugged in:
-- RD quarterly compounded formula: M = R * [((1 + i)^n - 1) / (1 - (1 + i)^(-1/3))] where R = monthly deposit, i = quarterly rate = (annual rate / 400), n = total compounding quarters
-- PPF / Lump sum yearly compounding: F = P * [((1 + i)^n - 1) / i] where i = annual rate / 100, n = years
-- Mutual Fund SIP monthly compounding: FV = P * [((1 + i)^n - 1) / i] * (1 + i) where P = monthly deposit, i = monthly rate = (annual rate / 1200), n = months
+PLAIN-LANGUAGE MATH SUMMARY (MANDATORY DISPLAY RULE):
+In "the_math" section of each play, you are STRICTLY FORBIDDEN from displaying any mathematical formula, exponents, algebraic notation, or step-by-step variable substitution (e.g., do NOT show 'M = R × [(1+i)^n - 1] / ...' or 'Plugging in: A = ...').
+Instead, you MUST display only a plain-language summary of the result, structured exactly like this:
+- MANDATORY TEMPLATE FOR CATEGORY B (SAVINGS GOAL):
+  "You currently have ₹[current_amount]. Your target is ₹[target_amount], leaving a shortfall of ₹[initial_gap_amount]. If you invest in [investment_type] at [rate]% p.a. and continue depositing ₹[monthly_deposit]/month, your final amount after [duration] will be ₹[calculated_final_amount] — [this covers your target with ₹X to spare / this falls short by ₹X].\n\nTo hit your exact target of ₹[target_amount] in [duration], you would instead need to deposit ₹[required_monthly_deposit]/month.\n\nAlternatively, if you'd rather keep depositing ₹[monthly_deposit]/month, you would need to extend your timeline to approximately [extended_timeline] to reach ₹[target_amount]."
+  (Note: For the Tier 4 HIGH RISK option, replace the confident final-amount and precise timelines with a realistic RANGE and explicitly state that losses are possible).
+- MANDATORY TEMPLATE FOR CATEGORY C (LUMP SUM INVESTMENT):
+  "You currently have ₹[current_amount]. If you invest this capital in this [investment_type] at [rate]% p.a., your final amount in hand after [duration] will be exactly ₹[calculated_final_amount] — this grows your principal by exactly ₹[gain_amount]."
+  (Note: For the Tier 4 HIGH RISK option, replace the confident final-amount with a realistic RANGE and explicitly state that losses are possible).
 
-═══════════════════════════════
-SEBI STRICT RULE
-═══════════════════════════════
-Discuss investment vehicles ONLY at the category level (e.g., "large-cap index mutual fund," "bank recurring deposit") — NEVER name specific tickers (HDFC Bank, Reliance), specific funds/schemes, private platforms (Groww, Zerodha), or IPO names.
+BANNED PHRASES (VIOLATING THESE BLOCKS THE OUTPUT):
+Do NOT use vague confirmation phrases as a replacement for stating the exact, precise final rupee amount. The following phrases are strictly banned if used without stating the exact calculated final amount:
+- "will grow to cover your entire target"
+- "you will reach your goal"
+- "your money will grow to meet your target"
+Any confirmation phrase must always be accompanied by the exact final rupee figure (calculated precisely as: current amount + all deposits + compounded interest, rounded to nearest 10).
+The exact calculation itself must still happen internally with full precision — this change is purely about hiding the working in the output, not skipping the calculation itself.
 
-═══════════════════════════════
-HOW TO MAP RESPONSES SENSITIVELY:
-═══════════════════════════════
-- For vague, broad, open-ended, stock market, freelance budgeting, lump sum, or SIP questions (where a list of 4 risk-comparison plays is not natural):
-  1. Set in JSON: "is_type_b": true
-  2. Write your complete personal coach roadmap response in "type_b_response" conforming to the STEP 2 flow (Understanding Confirmation, Roadmap, Risk/Instrument Notes, Disclaimer).
-  3. Include calculations context mathematically. Say if any figures are missing under the HARD RULE.
-  4. Ensure you end the "type_b_response" with the mandatory SEBI disclaimer and the RBI check date: "Rates shown are as of June 2026 — confirm before investing, as they're revised quarterly by RBI/Govt of India."
-  5. Keep "plays" empty [].
+CRITICAL: SPEED-VS-ACCURACY TRADEOFF & LATENCY OPTIMIZATION RULES
+Accuracy must NEVER be sacrificed for speed — a full calculation is required every time, regardless of platform, device, or urgency.
+There is no such thing as a "faster but slightly wrong" mode — only "correct." A response is only allowed to be released once the full reasoning pipeline below has completed.
 
-- For concrete, target-goal-saving questions with clear amounts and timeframes (where comparison cards make absolute sense):
-  1. Set in JSON: "is_type_b": false
-  2. Populate exactly 4 cards/plays with structural clarity.
-  3. Description of each card MUST follow this format:
-     **THE PLAN:** [State action simply, spelling out abbreviations of the vehicle.]
-     **THE MATH:** [Show calculated math with exact numbers plugged in: "₹[R]/month for [months] at [interest_rate]% p.a. compounds to ₹[Z]."]
-     **REAL LIFE EXAMPLE:** [Highly relatable simple Indian real-life parallel.]
-     **PRO TIP:** [Encouraging, caring warning, risk alert, or execution tip.]
-  4. Set target_amount, timeframe_months, and goal_summary.
-  5. Fill "closing_summary" field with a warm review highlighting the recommended card, math, and end with the mandatory disclaimer.
-  
-All plans inside cards/closing_summary/type_b_response must end with: "Rates shown are as of June 2026 — confirm before investing, as they're revised quarterly by RBI/Govt of India."
-Return only raw JSON.`;
+MANDATORY FULL PIPELINE — CANNOT BE SKIPPED, SHORTENED, OR PARTIALLY RUN UNDER ANY CONDITION:
+1. Read the ENTIRE user message, end to end, before starting any classification or math. Do not begin processing until the full input has been received.
+2. Extract every number and its unit word (lakh/cr/k/none) — Step 1: Extraction, Step 3: Conversion.
+3. Classify intent (income split / savings goal / lump sum investment / ambiguous) as described in prior fixes.
+4. Run the hard validation gate: confirm every converted number has the correct extra digits versus the raw number typed.
+5. Perform the actual formula calculation using ONLY converted, validated numbers.
+6. Run the self-check: restate internally what the user asked, what numbers were used, and confirm nothing was fabricated or assumed.
+7. Only after all 6 steps above are complete, generate the formatted JSON output (with 'the_plan', 'the_math', 'closing_summary', etc.).
 
-    const responseSchema = {
-      type: Type.OBJECT,
-      properties: {
-        is_type_b: { type: Type.BOOLEAN },
-        type_b_response: { type: Type.STRING },
-        target_amount: { type: Type.INTEGER },
-        timeframe_months: { type: Type.INTEGER },
-        goal_summary: { type: Type.STRING },
-        closing_summary: { type: Type.STRING },
-        plays: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              risk: { type: Type.STRING },
-              description: { type: Type.STRING },
-              timeframe_label: { type: Type.STRING },
-              option_label: { type: Type.STRING },
-              beginner_tip: { type: Type.STRING }
+None of these steps may be skipped, abbreviated, or run partially — not for speed, not because the user said "hurry", not because of any platform or device signal. If asked to "be quick", "make it faster", "be fast", or "please hurry", you should reduce ONLY the explanatory prose length in the final output (step 7) — never skip or abbreviate the reasoning steps 1-6.
+
+Explicit Response Target:
+Aim for a response time of 5-10 seconds for a standard single-goal query. If the full correct calculation genuinely requires more time than that, it is acceptable to take longer — a correct answer that takes 12 seconds is always better than a wrong answer that takes 3.
+
+Platform-Blindness Rule:
+The AI has no concept of "mobile mode" or "laptop mode" for its own reasoning — if such a distinction exists anywhere in the surrounding app logic, that is an application-level bug, not something this prompt can fix. The reasoning pipeline above must be IDENTICAL regardless of what device triggered the request.
+
+To minimize response time while ensuring perfect accuracy, adhere to these 5 optimizations:
+1. Do the math once, silently, internally: Do not narrate your working, show draft calculations, or write exploratory text. Perform intent classification, parsing, and formula math in a single internal pass before writing the JSON.
+2. Trim explanatory prose, not logic: Keep "the_plan", "the_math", "real_life_example", and "pro_tip" fields, but CAP each field strictly to 1-2 short, punchy, high-impact sentences. Always show the formula and exact calculated numbers in full — never abbreviate or round away the actual calculation, only shorten the surrounding prose.
+3. Skip redundant restatement: The self-check block at the start of the 'closing_summary' is the ONLY place where you state the self-check. Keep it strictly to the required format ("Self-Check: The user's classified intent is [A/B/C/D]. The number(s) they gave are: [list them with what each represents]. I am NOT introducing any number they didn't provide.") and make it extremely concise. Do not write any other self-check or validation prose in other fields.
+4. Generate in a single pass: Output all JSON fields together directly without any step-by-step revision.
+5. MANDATORY EXACTLY 4 RISK-TIERS FOR PLANS: For Category B and Category C, you MUST always output EXACTLY four distinct plays/options corresponding to the four risk tiers: Option 1: LOW RISK (GUARANTEED), Option 2: MEDIUM RISK (MARKET-LINKED), Option 3: GROWTH RISK (MARKET-LINKED, VOLATILE), and Option 4: VERY HIGH RISK (SPECULATIVE — CAPITAL AT RISK). Never output fewer or more than exactly 4 options for Category B or C.
+
+First, you MUST classify the user's message into one of these categories:
+- Category A — Income Allocation/Splitting: User states an income/earning amount and asks how to divide, split, allocate, or budget it (keywords: "I earn", "my income is", "how to split", "how to divide", "how to allocate", "how to budget").
+  - Recommended split: Use only the stated income. Allocate across categories (e.g., Needs: 50%, Wants: 30%, Savings/Investments: 20%).
+  - CRITICAL: The income figure is NOT a goal. Do not invent a "goal amount", a "shortfall", or assume a prior savings rate that was not stated.
+- Category B — Savings Goal: User states a target amount they want to reach or save toward (keywords: "I want to save", "my goal is", "I need", "target of").
+  - Check if they provided a current monthly saving capacity in their query, or if it is available in the profile/onboarding.
+  - If they have a lump sum (capital) in addition to a goal (e.g. "I have 21 lakh want to buy home worth 70 lakh in 5 years"), subtract the grown value of that lump sum from the target to find the remaining target.
+  - If a required saving rate is missing, and they have no lump sum, ASK the user for it before calculating, rather than guessing. Do not fabricate an assumed saving rate or a shortfall.
+  - If saving capacity is provided, compare flat savings (flat savings = monthly_saving * timeframe) to the target to calculate the shortfall.
+  - MANDATORY: Return exactly 4 options:
+    - Play 1 (LOW RISK (GUARANTEED)): Bank Recurring Deposit (RD) at 7.00% p.a. (quarterly compounded).
+    - Play 2 (MEDIUM RISK (MARKET-LINKED)): Debt Mutual Fund SIP at 9.00% p.a. (monthly compounded).
+    - Play 3 (GROWTH RISK (MARKET-LINKED, VOLATILE)): Equity Index Mutual Fund SIP at 13.00% p.a. (monthly compounded).
+    - Play 4 (VERY HIGH RISK (SPECULATIVE — CAPITAL AT RISK)): Direct Stocks/Crypto at variable 15-25% p.a. Note: For this tier, state a range of potential outcomes and explicit warnings of loss.
+    - State a clear, one-line justification why each tier fits its risk category.
+- Category C — Lump Sum Investment: User states an amount they already have and want to invest (keywords: "I have", "idle lump sum", "where should I put", "invest").
+  - Treat the stated amount as capital to deploy today, not a savings goal or monthly income.
+  - MANDATORY: Return exactly 4 options:
+    - Play 1 (LOW RISK (GUARANTEED)): Bank Fixed Deposit (FD) at 7.00% p.a. (quarterly compounded).
+    - Play 2 (MEDIUM RISK (MARKET-LINKED)): Debt Mutual Fund at 9.00% p.a. (monthly compounded).
+    - Play 3 (GROWTH RISK (MARKET-LINKED, VOLATILE)): Equity Index Mutual Fund at 13.00% p.a. (monthly compounded).
+    - Play 4 (VERY HIGH RISK (SPECULATIVE — CAPITAL AT RISK)): Direct Stocks/Crypto at variable 15-25% p.a. Note: For this tier, state a range of potential outcomes and explicit warnings of loss.
+    - State a clear, one-line justification why each tier fits its risk category.
+- Category D — Ambiguous/Unclear: If the message does not clearly match A, B, or C, or if required info (such as target or timeframe or income) is missing or ambiguous.
+  - DO NOT guess or invent numbers. Ask a single clarifying question.
+
+Mandatory Internal Self-Check Rule:
+Before generating the plan, the math, and recommendation, you MUST write down an internal self-check block at the top of the 'closing_summary' field of the JSON response in this exact format:
+"Self-Check: The user's classified intent is [A/B/C/D]. The number(s) they gave are: [list them with what each represents]. I am NOT introducing any number they didn't provide."
+
+Structured Output Fields for Plays:
+For each play inside the 'plays' array, you MUST output the following fields as separate, clean, distinct text strings:
+1. 'the_plan': The actionable strategy. (Do NOT include a starting label or any newline/escape characters).
+2. 'the_math': A plain-language summary of results (current amount, target, shortfall, monthly deposit, maturity amount) as facts. Do NOT show any formulas or substitutions. (Do NOT include a starting label. You MAY use newlines in this field to separate paragraphs).
+3. 'real_life_example': A clear, relatable analogy. (Do NOT include a starting label or any newline/escape characters).
+4. 'pro_tip': A strategic hack or tip. (Do NOT include a starting label or any newline/escape characters).
+
+CRITICAL FORMATTING RULES:
+- Do NOT use the prefix labels like "**THE PLAN:**", "**THE MATH:**", etc. inside their respective separate fields. Just output the clean contents.
+- Do NOT generate literal '\\n' or '\\\\n' characters anywhere inside these separate fields (except 'the_math').
+
+Financial Instruments and Rates (as of July 2026):
+1. Option 1 (LOW RISK (GUARANTEED)): Bank RD/FD or Post Office schemes — 7.00% p.a. (DICGC insured or government guaranteed). For RD (quarterly compounding): M = R × [(1+i)^n - 1] / (1 - (1+i)^(-1/3)), where i = rate/400, n = quarters.
+2. Option 2 (MEDIUM RISK (MARKET-LINKED)): Debt Mutual Funds / Hybrid Mutual Funds — 9.00% p.a. average (monthly compounding). Market-linked, not guaranteed.
+3. Option 3 (GROWTH RISK (MARKET-LINKED, VOLATILE)): Equity Index Mutual Funds — 13.00% p.a. historical average (monthly compounding). Market-linked, highly volatile.
+4. Option 4 (VERY HIGH RISK (SPECULATIVE — CAPITAL AT RISK)): Direct Stocks/Crypto — 15-25% p.a. historical average (monthly compounding). Speculative, highly volatile, potential for total loss.
+
+Mathematical Precision:
+- Present all mathematical results in 'the_math' strictly as clean, plain-language sentences with no formulas, algebraic notation, or step-by-step substitutions shown.
+- Round final rupee values to the nearest ₹10.
+- State which instruments are government-guaranteed vs market-linked.
+- Disclose lock-in periods clearly.
+- End the closing_summary with: "Rates shown are as of July 2026 — confirm before investing, as they're revised quarterly by RBI/Govt of India."`;
+
+    const userPrompt = `User Query: "${goal}"
+User Profile Age: ${userAge} years
+Onboarding Check-In Income: ₹${stored_income}
+Onboarding Check-In Spend: ₹${stored_spend}
+Onboarding Surplus/Savings Rate: ₹${stored_surplus}
+
+Analyze the user's query against our categories (A, B, C, D) and onboarding context.
+Apply the strict unit multiplier extraction and validation rules for any number in the User Query (e.g., 21 lakh -> 21,00,000; 70 lakh -> 70,00,000; 40k -> 40,000).
+If they asked to split an income (Category A), do not calculate a goal target or shortfall.
+If they specified a savings goal (Category B) but we have no savings capacity and no starting capital from either their query or onboarding check-in surplus, classify as Category D and ask for it.
+Make sure you write the Self-Check block at the top of closing_summary.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: userPrompt,
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            is_type_b: {
+              type: Type.BOOLEAN,
+              description: "Set to false for Category A, C, D or structured plans. Set to true ONLY for highly open-ended/broad educational questions like 'how to get rich' or 'what is a mutual fund'."
             },
-            required: ["title", "risk", "description", "timeframe_label", "option_label", "beginner_tip"]
-          }
-        }
-      },
-      required: ["target_amount", "timeframe_months", "goal_summary", "plays", "closing_summary"]
-    };
-
-    let userPrompt = `Answer my input as Paisa Coach: "${goal}"
-My Age: ${userAge} years old
-Extracted Goal Item: ${parsed.goal_item}
-Extracted Target Amount: ₹${target.toLocaleString('en-IN')}
-Extracted Timeframe: ${months} months (Parsed from message: ${parsed.hasTimeframeInMsg ? "Yes" : "No"})
-Extracted Contribution Surplus: ₹${statedP ? statedP.toLocaleString('en-IN') : 0}/month`;
-
-    if (parsed.used_stored_profile_savings && statedP) {
-      userPrompt += `\n\nCRITICAL DIRECTIVE: The user did NOT specify their monthly savings rate in their message, so we fetched their onboarding savings budget of ₹${statedP.toLocaleString('en-IN')}/month.
-You MUST state this naturally and transparently in the output's "goal_summary" or introductory play description (e.g., "Since you've got about ₹${statedP.toLocaleString('en-IN')} left over each month based on what you told us earlier, here's how that plays out..."). Make it feel like the app remembered them, not like a silent data pull. Do not mention any mismatch with their message (since they didn't specify one).`;
-    }
-
-    if (!parsed.hasTimeframeInMsg && !parsed.used_stored_profile_savings && !parsed.is_type_b) {
-      userPrompt += `\n\nCRITICAL TIMEFRAME NOTIFICATION: The user did NOT specify a timeframe in their message, so we are defaulting to 12 months.
-You MUST explicitly state in the output "goal_summary" (e.g. "Drafting a 12-month savings blueprint to reach ₹${target.toLocaleString('en-IN')} - since you didn't mention a timeframe, I'm planning for 12 months — let me know if you meant longer or shorter.") so the user is completely aware of the assumption! Ensure this message is displayed word-for-word or in a highly equivalent natural form.`;
-    }
-
-    let response: any;
-    const attempts = 3;
-    let success = false;
-    let lastErr: any = null;
-
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      try {
-        response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: userPrompt,
-          config: {
-            systemInstruction,
-            responseMimeType: "application/json",
-            responseSchema,
-            temperature: 0.4
-          }
-        });
-        success = true;
-        break;
-      } catch (err: any) {
-        lastErr = err;
-        if (attempt < attempts) {
-          console.warn(`Paisa Coach: API attempt ${attempt} failed: ${err.message || err}. Retrying in 1.5 seconds...`);
-          await new Promise((resolve) => setTimeout(resolve, 1500));
+            type_b_response: {
+              type: Type.STRING,
+              description: "The full general conversational/explainer text if is_type_b is true. Empty string otherwise."
+            },
+            target_amount: {
+              type: Type.NUMBER,
+              description: "The target savings goal amount (Category B) or lump sum amount (Category C). Set to 0 for Category A or D."
+            },
+            timeframe_months: {
+              type: Type.NUMBER,
+              description: "The timeframe in months. Default to 12 if unspecified or 0 for Category A/D."
+            },
+            goal_summary: {
+              type: Type.STRING,
+              description: "A short, punchy heading summarizing the intent (e.g. 'Monthly Budget Split: Allocating your ₹40k income' or 'Awaiting your numbers, buddy! 🎯')."
+            },
+            plays: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING, description: "Actionable play title (e.g., '50% Needs: Essential Living Expenses' or 'Bank Fixed Deposit (FD)')." },
+                  risk: { type: Type.STRING, description: "Risk label (e.g. 'Low risk (Government guaranteed)' or 'High risk')." },
+                  description: {
+                    type: Type.STRING,
+                    description: "A blank string or short summary (fallback)."
+                  },
+                  the_plan: {
+                    type: Type.STRING,
+                    description: "The concrete actionable plan steps. IMPORTANT: DO NOT use raw newlines like '\\n' or escape sequences. Write as a single, beautifully structured paragraph."
+                  },
+                  the_math: {
+                    type: Type.STRING,
+                    description: "The exact compound interest math or calculations with values plugged in."
+                  },
+                  real_life_example: {
+                    type: Type.STRING,
+                    description: "A simple, relatable real life analogy. IMPORTANT: DO NOT use raw newlines like '\\n' or escape sequences. Write as a single, beautifully structured paragraph."
+                  },
+                  pro_tip: {
+                    type: Type.STRING,
+                    description: "A professional hack or pro tip for this strategy. IMPORTANT: DO NOT use raw newlines like '\\n' or escape sequences. Write as a single, beautifully structured paragraph."
+                  },
+                  timeframe_label: { type: Type.STRING, description: "Timeframe label (e.g. '12 months' or 'Liquid')." },
+                  option_label: { type: Type.STRING, description: "Option index or category label (e.g. 'Needs', 'Option 1 (Govt)')." },
+                  beginner_tip: { type: Type.STRING, description: "A simple tip for beginners to start with this play." }
+                },
+                required: ["title", "risk", "description", "the_plan", "the_math", "real_life_example", "pro_tip", "timeframe_label", "option_label", "beginner_tip"]
+              }
+            },
+            closing_summary: {
+              type: Type.STRING,
+              description: "The final recommendation/closing advice. MUST start with the Self-Check restatement block: 'Self-Check: The user's classified intent is [A/B/C/D]. The number(s) they gave are: [list them with what each represents]. I am NOT introducing any number they didn't provide.' And MUST end with the disclaimer: 'Rates shown are as of July 2026 — confirm before investing, as they're revised quarterly by RBI/Govt of India.'"
+            }
+          },
+          required: ["is_type_b", "type_b_response", "target_amount", "timeframe_months", "goal_summary", "plays", "closing_summary"]
         }
       }
+    });
+
+    const textResult = response.text;
+    if (textResult) {
+      const parsedJSON = JSON.parse(textResult);
+      return res.json(parsedJSON);
     }
 
-    if (!success) {
-      throw lastErr || new Error("Gemini API generation failed after retries.");
-    }
-
-    const parsedData = JSON.parse(response.text || "{}");
-    
-    // Safety checks / normalization
-    parsedData.is_type_b = parsedData.is_type_b || parsed.is_type_b || false;
-    parsedData.type_b_response = parsedData.type_b_response || "";
-    parsedData.closing_summary = parsedData.closing_summary || "";
-
-    // Safety check / normalization of option labels
-    if (parsedData.plays && Array.isArray(parsedData.plays)) {
-      parsedData.plays = parsedData.plays.map((play: any, index: number) => {
-        const defaultLabel = isPureExplainer ? "Paisa Coach Explains" : `option ${index + 1}`;
-        return {
-          ...play,
-          option_label: play.option_label || defaultLabel
-        };
-      });
-    }
-
-    res.json(parsedData);
+    // Fallback if returned text is empty
+    throw new Error("Empty response from Gemini");
 
   } catch (error: any) {
-    console.warn("Paisa Coach API rate-limited or busy, resorting to offline personal coaching and math calculations engine. Details:", error.message || error);
-    // Extremely robust local calculations generator! Beautiful fallback matching user age & exact profile parameters
-    const fb = getFallbackPlays(isPureExplainer, target, months, statedP, calculationsContext, userAge, (parsed && parsed.goal_item) || "item");
-    if (fb && !('closing_summary' in fb)) {
-      fb.closing_summary = "";
-    }
-    res.json(fb);
+    console.warn("[Paisa Coach] Gemini execution error or parser failure, falling back to offline logic", error);
+    const fb = getLocalFallbackResponse(req.body.goal || "", req.body.checkIn, req.body.profile);
+    return res.json(fb);
   }
 }

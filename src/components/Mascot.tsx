@@ -1,65 +1,99 @@
 import React from 'react';
 
-export const PiggyBank: React.FC<{ className?: string }> = ({ className = "" }) => (
-  <svg
-    className={`${className} opacity-95 filter drop-shadow-[3px_3px_0px_#09090B]`}
-    width="80"
-    height="80"
-    viewBox="0 0 100 100"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-  >
-    {/* Ground Shadow underneath the jumping cute pig */}
-    <ellipse cx="44" cy="88" rx="20" ry="3.5" fill="#09090B" opacity="0.12" />
+export const PiggyBank: React.FC<{ className?: string; mood?: 'happy' | 'neutral' | 'worried' }> = ({ className = "", mood = "happy" }) => {
+  const emojiMap = { happy: '😊', neutral: '😐', worried: '😟' };
 
-    {/* Back Legs (Darker pink because of shadow layer) */}
-    <rect x="25" y="66" width="12" height="15" rx="6" fill="#F472B6" stroke="#09090B" strokeWidth="3.5" strokeLinejoin="round" />
-    <rect x="54" y="66" width="12" height="15" rx="6" fill="#F472B6" stroke="#09090B" strokeWidth="3.5" strokeLinejoin="round" />
+  return (
+    <svg
+      className={`${className} opacity-95 filter drop-shadow-[3px_3px_0px_#09090B]`}
+      width="80"
+      height="80"
+      viewBox="0 0 100 100"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      {/* Ground Shadow underneath the jumping cute pig */}
+      <ellipse cx="44" cy="88" rx="20" ry="3.5" fill="#09090B" opacity="0.12" />
 
-    {/* Tiny Curly Tail */}
-    <path d="M16 54 C10 52, 11 40, 6 43" stroke="#09090B" strokeWidth="4" strokeLinecap="round" fill="none" />
+      {/* Back Legs (Darker pink because of shadow layer) */}
+      <rect x="25" y="66" width="12" height="15" rx="6" fill="#F472B6" stroke="#09090B" strokeWidth="3.5" strokeLinejoin="round" />
+      <rect x="54" y="66" width="12" height="15" rx="6" fill="#F472B6" stroke="#09090B" strokeWidth="3.5" strokeLinejoin="round" />
 
-    {/* Elegant chubby Body (soft bubblegum pink) */}
-    <ellipse cx="44" cy="48" rx="30" ry="26" fill="#FBCFE8" stroke="#09090B" strokeWidth="3.5" />
+      {/* Tiny Curly Tail */}
+      <path d="M16 54 C10 52, 11 40, 6 43" stroke="#09090B" strokeWidth="4" strokeLinecap="round" fill="none" />
 
-    {/* Glossy highlight on back (white pill shape) */}
-    <path d="M21 40 C 21 31, 28 25, 36 25" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" opacity="0.8" />
+      {/* Elegant chubby Body (soft bubblegum pink) */}
+      <ellipse cx="44" cy="48" rx="30" ry="26" fill="#FBCFE8" stroke="#09090B" strokeWidth="3.5" />
 
-    {/* Front Legs (Closest to the viewer - cute peachy pink) */}
-    <rect x="31" y="68" width="12" height="14" rx="6" fill="#FBCFE8" stroke="#09090B" strokeWidth="3.5" strokeLinejoin="round" />
-    <rect x="48" y="68" width="12" height="14" rx="6" fill="#FBCFE8" stroke="#09090B" strokeWidth="3.5" strokeLinejoin="round" />
+      {/* Glossy highlight on back (white pill shape) */}
+      <path d="M21 40 C 21 31, 28 25, 36 25" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" opacity="0.8" />
 
-    {/* Ears */}
-    {/* Left Ear */}
-    <path d="M48 24 L54 13 L58 23 Z" fill="#FBCFE8" stroke="#09090B" strokeWidth="3.5" strokeLinejoin="round" />
-    {/* Right Ear */}
-    <path d="M58 22 L66 9 L70 23 Z" fill="#FBCFE8" stroke="#09090B" strokeWidth="3.5" strokeLinejoin="round" />
-    <path d="M61 21 L66 12 L68 22 Z" fill="#F472B6" />
+      {/* Front Legs (Closest to the viewer - cute peachy pink) */}
+      <rect x="31" y="68" width="12" height="14" rx="6" fill="#FBCFE8" stroke="#09090B" strokeWidth="3.5" strokeLinejoin="round" />
+      <rect x="48" y="68" width="12" height="14" rx="6" fill="#FBCFE8" stroke="#09090B" strokeWidth="3.5" strokeLinejoin="round" />
 
-    {/* Snout with small cute oval nostrils */}
-    <ellipse cx="73" cy="51" rx="9" ry="7.5" fill="#F472B6" stroke="#09090B" strokeWidth="3.5" />
-    <ellipse cx="70.5" cy="51" rx="1.8" ry="2.2" fill="#09090B" />
-    <ellipse cx="75.5" cy="51" rx="1.8" ry="2.2" fill="#09090B" />
+      {/* Ears */}
+      {/* Left Ear */}
+      <path d="M48 24 L54 13 L58 23 Z" fill="#FBCFE8" stroke="#09090B" strokeWidth="3.5" strokeLinejoin="round" />
+      {/* Right Ear */}
+      <path d="M58 22 L66 9 L70 23 Z" fill="#FBCFE8" stroke="#09090B" strokeWidth="3.5" strokeLinejoin="round" />
+      <path d="M61 21 L66 12 L68 22 Z" fill="#F472B6" />
 
-    {/* Coin Slot on the back */}
-    <rect x="36" y="21" width="16" height="4.5" rx="2" fill="#78350F" stroke="#09090B" strokeWidth="1.5" />
+      {/* Snout with small cute oval nostrils */}
+      <ellipse cx="73" cy="51" rx="9" ry="7.5" fill="#F472B6" stroke="#09090B" strokeWidth="3.5" />
+      <ellipse cx="70.5" cy="51" rx="1.8" ry="2.2" fill="#09090B" />
+      <ellipse cx="75.5" cy="51" rx="1.8" ry="2.2" fill="#09090B" />
 
-    {/* Shiny Chibi Eyes with sparkles precisely like the photo */}
-    {/* Left Eye */}
-    <circle cx="56" cy="41" r="3.8" fill="#09090B" />
-    <circle cx="54.8" cy="39.8" r="1.3" fill="#FFFFFF" />
-    <circle cx="57.2" cy="42.2" r="0.6" fill="#FFFFFF" />
+      {/* Coin Slot on the back */}
+      <rect x="36" y="21" width="16" height="4.5" rx="2" fill="#78350F" stroke="#09090B" strokeWidth="1.5" />
 
-    {/* Right Eye */}
-    <circle cx="67" cy="41" r="3.8" fill="#09090B" />
-    <circle cx="65.8" cy="39.8" r="1.3" fill="#FFFFFF" />
-    <circle cx="68.2" cy="42.2" r="0.6" fill="#FFFFFF" />
+      {/* Shiny Chibi Eyes with sparkles precisely like the photo */}
+      {mood === 'happy' && (
+        <>
+          {/* Left Eye */}
+          <circle cx="56" cy="41" r="3.8" fill="#09090B" />
+          <circle cx="54.8" cy="39.8" r="1.3" fill="#FFFFFF" />
+          <circle cx="57.2" cy="42.2" r="0.6" fill="#FFFFFF" />
 
-    {/* Adorable blush marks */}
-    <ellipse cx="54" cy="45.5" rx="3" ry="1.2" fill="#FF8DA1" opacity="0.9" />
-    <ellipse cx="70" cy="45.5" rx="3" ry="1.2" fill="#FF8DA1" opacity="0.9" />
-  </svg>
-);
+          {/* Right Eye */}
+          <circle cx="67" cy="41" r="3.8" fill="#09090B" />
+          <circle cx="65.8" cy="39.8" r="1.3" fill="#FFFFFF" />
+          <circle cx="68.2" cy="42.2" r="0.6" fill="#FFFFFF" />
+        </>
+      )}
+
+      {mood === 'neutral' && (
+        <>
+          {/* Neutral flat line eyes */}
+          <line x1="51" y1="41" x2="59" y2="41" stroke="#09090B" strokeWidth="4.5" strokeLinecap="round" />
+          <line x1="63" y1="41" x2="71" y2="41" stroke="#09090B" strokeWidth="4.5" strokeLinecap="round" />
+        </>
+      )}
+
+      {mood === 'worried' && (
+        <>
+          {/* Slanted sad/worried eyes */}
+          <line x1="51" y1="42" x2="59" y2="39" stroke="#09090B" strokeWidth="4.5" strokeLinecap="round" />
+          <line x1="63" y1="39" x2="71" y2="42" stroke="#09090B" strokeWidth="4.5" strokeLinecap="round" />
+          {/* Tear drop */}
+          <path d="M48 45 Q47 48 49 48 Q51 48 50 45 Z" fill="#3B82F6" stroke="#09090B" strokeWidth="1" />
+          {/* Sweat drop */}
+          <path d="M38 28 Q37 32 39 32 Q41 32 40 28 Z" fill="#3B82F6" stroke="#09090B" strokeWidth="1" />
+        </>
+      )}
+
+      {/* Adorable blush marks */}
+      <ellipse cx="54" cy="45.5" rx="3" ry="1.2" fill="#FF8DA1" opacity="0.9" />
+      <ellipse cx="70" cy="45.5" rx="3" ry="1.2" fill="#FF8DA1" opacity="0.9" />
+
+      {/* Small companion emoji bubble */}
+      <g transform="translate(74, 68)">
+        <circle cx="10" cy="10" r="11" fill="#FEF08A" stroke="#09090B" strokeWidth="3" />
+        <text x="10" y="14" fontFamily="system-ui, sans-serif" fontWeight="bold" fontSize="13" textAnchor="middle">{emojiMap[mood]}</text>
+      </g>
+    </svg>
+  );
+};
 
 export const CuteWallet: React.FC<{ className?: string }> = ({ className = "" }) => (
   <svg

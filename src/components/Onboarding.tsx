@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { UserProfile } from '../types';
 import { ArrowRight, Sparkles } from 'lucide-react';
 import { PiggyBank } from './Mascot';
+import { Confetti } from './Confetti';
 
 interface OnboardingProps {
   onComplete: (profile: UserProfile) => void;
@@ -14,6 +15,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   const [gender, setGender] = useState('Rather Not Say');
   const [role, setRole] = useState<'Student' | 'Employed' | 'Other'>('Student');
   const [error, setError] = useState('');
+  const [showConfetti, setShowConfetti] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,7 +28,10 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
       return;
     }
     setError('');
-    onComplete({ name: name.trim(), age, gender, role });
+    setShowConfetti(true);
+    setTimeout(() => {
+      onComplete({ name: name.trim(), age, gender, role });
+    }, 1200);
   };
 
   return (
@@ -37,6 +42,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
       className="w-full max-w-xl mx-auto sticker-card p-8 md:p-10 relative overflow-hidden"
       id="onboarding-card"
     >
+      {showConfetti && <Confetti onComplete={() => setShowConfetti(false)} />}
       <div className="absolute top-4 right-4">
         <PiggyBank className="w-14 h-14" />
       </div>

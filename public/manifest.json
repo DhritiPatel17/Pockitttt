@@ -1,0 +1,8 @@
+{
+  "name": "pockittt",
+  "short_name": "pockittt",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#C6FF00",
+  "background_color": "#FEF08A"
+}

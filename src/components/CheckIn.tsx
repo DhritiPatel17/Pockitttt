@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MoneyCheckIn, UserProfile } from '../types';
 import { ArrowLeft, Wallet, TrendingUp, Sparkles, Smile, Frown, ShieldAlert } from 'lucide-react';
+import { roastLines } from '../data/roastLines';
 
 interface CheckInProps {
   profile: UserProfile;
@@ -15,15 +16,18 @@ export const CheckIn: React.FC<CheckInProps> = ({ profile, initialData, onComple
   const [monthlySpend, setMonthlySpend] = useState<number>(initialData?.monthlySpend ?? 1500);
   const [customIncome, setCustomIncome] = useState<string>(String(initialData?.monthlyIncome ?? 2500));
   const [customSpend, setCustomSpend] = useState<string>(String(initialData?.monthlySpend ?? 1500));
+  const [activeRoast, setActiveRoast] = useState<string | null>(null);
 
   const handleIncomeSliderChange = (val: number) => {
     setMonthlyIncome(val);
     setCustomIncome(String(val));
+    setActiveRoast(null);
   };
 
   const handleSpendSliderChange = (val: number) => {
     setMonthlySpend(val);
     setCustomSpend(String(val));
+    setActiveRoast(null);
   };
 
   const handleIncomeTextChange = (text: string) => {
@@ -31,6 +35,7 @@ export const CheckIn: React.FC<CheckInProps> = ({ profile, initialData, onComple
     const parsed = parseInt(text);
     if (!isNaN(parsed) && parsed >= 0) {
       setMonthlyIncome(parsed);
+      setActiveRoast(null);
     }
   };
 
@@ -39,11 +44,34 @@ export const CheckIn: React.FC<CheckInProps> = ({ profile, initialData, onComple
     const parsed = parseInt(text);
     if (!isNaN(parsed) && parsed >= 0) {
       setMonthlySpend(parsed);
+      setActiveRoast(null);
     }
   };
 
   const savings = Math.max(0, monthlyIncome - monthlySpend);
   const savingsPercent = monthlyIncome > 0 ? (savings / monthlyIncome) * 100 : 0;
+
+  const handleRoast = () => {
+    let lines: string[] = [];
+    if (monthlyIncome === 0) {
+      lines = roastLines.incomeZero;
+    } else if (monthlySpend > monthlyIncome) {
+      lines = roastLines.overspending;
+    } else if (monthlySpend === monthlyIncome) {
+      lines = roastLines.hundredPercentSpend;
+    } else if (savingsPercent > 50) {
+      lines = roastLines.highSavings;
+    } else {
+      lines = roastLines.normalSavings;
+    }
+
+    const available = lines.filter(l => l !== activeRoast);
+    const chosen = available.length > 0 
+      ? available[Math.floor(Math.random() * available.length)]
+      : lines[Math.floor(Math.random() * lines.length)];
+
+    setActiveRoast(chosen);
+  };
 
   // Witty Gen Z personalized feedback based on allowance state
   const getSavingsFeedback = () => {
@@ -224,20 +252,59 @@ export const CheckIn: React.FC<CheckInProps> = ({ profile, initialData, onComple
         </div>
 
         {/* Real-time Bestie Response */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={feedback.text}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className={`border-4 border-[#09090B] rounded-2xl p-4 flex gap-2.5 items-start ${feedback.bg} shadow-[4px_4px_0px_#09090B]`}
-          >
-            {feedback.icon}
-            <p className="text-xs font-sans text-[#09090B] leading-relaxed font-semibold">
-              {feedback.text}
-            </p>
-          </motion.div>
-        </AnimatePresence>
+        <div className="space-y-3">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={feedback.text}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className={`border-4 border-[#09090B] rounded-2xl p-4 flex gap-2.5 items-start ${feedback.bg} shadow-[4px_4px_0px_#09090B]`}
+            >
+              {feedback.icon}
+              <div className="flex-1">
+                <p className="text-xs font-sans text-[#09090B] leading-relaxed font-semibold">
+                  {feedback.text}
+                </p>
+                <div className="mt-2.5 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleRoast}
+                    className="bg-[#FF2A85] text-white border-2 border-[#09090B] rounded-full px-3 py-1 text-[10px] font-display font-bold uppercase tracking-wide hover:scale-105 active:scale-95 shadow-[2px_2px_0px_#09090B] cursor-pointer transition-transform"
+                  >
+                    roast me 🔥
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {activeRoast && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, y: 5 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 5 }}
+                className="border-4 border-[#09090B] rounded-2xl p-3.5 bg-red-100 shadow-[4px_4px_0px_#09090B] relative flex items-start gap-2.5"
+              >
+                <span className="text-lg shrink-0">🔥</span>
+                <div className="flex-1">
+                  <span className="block text-[8px] font-mono text-[#09090B]/60 font-bold uppercase leading-none mb-1">bestie roasts you:</span>
+                  <p className="text-xs font-sans text-[#09090B] font-bold italic leading-relaxed">
+                    "{activeRoast}"
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveRoast(null)}
+                  className="text-[#09090B] hover:text-[#FF2A85] font-display font-black text-sm px-1 cursor-pointer"
+                >
+                  ×
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
         {/* Sticker button for complete */}
         <button

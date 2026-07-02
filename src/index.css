@@ -1,9 +1,10 @@
-@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Pirata+One&family=UnifrakturMaguntia&family=Special+Elite&family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Playfair+Display:ital,wght@0,400;0,700;0,800;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700;800&family=Pirata+One&family=UnifrakturMaguntia&family=Special+Elite&family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Playfair+Display:ital,wght@0,400;0,700;0,800;1,400&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: 'Nunito', system-ui, -apple-system, sans-serif;
-  --font-display: 'Fredoka', system-ui, -apple-system, sans-serif;
+  --font-display: 'Space Grotesk', 'Fredoka', system-ui, -apple-system, sans-serif;
+  --font-space: 'Space Grotesk', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
   --font-gothic: 'UnifrakturMaguntia', 'Pirata One', serif;
   --font-typewriter: 'Special Elite', 'Courier Prime', Courier, monospace;
@@ -238,5 +239,16 @@ input[type="range"].cb-range::-moz-range-thumb {
   animation: marquee 20s linear infinite;
   display: flex;
   width: max-content;
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Hide scrollbar for IE, Edge and Firefox */
+.scrollbar-none {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
 }
 

@@ -170,13 +170,13 @@ Rules:
       try {
         await fs.writeFile(CACHE_FILE, JSON.stringify(responseData));
       } catch (cacheErr) {
-        console.error("Failed to write to finance times cache:", cacheErr);
+        console.log("Failed to write to finance times cache:", cacheErr);
       }
 
       return res.json(responseData);
 
     } catch (error: any) {
-      console.error("Finance Times live generation failed, attempting fallback:", error);
+      console.log("Finance Times live generation fallback activated (serving cached/offline data)");
       
       try {
         const cachedDataString = await fs.readFile(CACHE_FILE, 'utf-8');
@@ -218,7 +218,15 @@ Rules:
           isLive: false,
           lastUpdated: new Date().toISOString()
         };
-        console.warn("Serving fully self-contained offline backup Finance Times edition due to API/Cache block.");
+
+        // Cache the fallback response so subsequent requests hit the fast cached path and don't spam 429 errors
+        try {
+          await fs.writeFile(CACHE_FILE, JSON.stringify(fallbackResponse));
+        } catch (writeErr) {
+          // Ignore cache write error
+        }
+
+        console.log("Serving fully self-contained offline backup Finance Times edition due to API/Cache block.");
         return res.json(fallbackResponse);
       }
     }
@@ -434,7 +442,7 @@ As Coinkie, my general rule of thumb for teen financial success is:
 
       res.json({ reply: response.text });
     } catch (error: any) {
-      console.error("Chat API Error, using dynamic local fallback:", error);
+      console.log("Chat API fallback activated (using offline conversational responses)");
       const fallbackText = generateLocalCoinkieReply(req.body.message || "");
       res.json({ reply: fallbackText });
     }
