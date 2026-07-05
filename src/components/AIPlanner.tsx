@@ -451,13 +451,13 @@ export const AIPlanner: React.FC<AIPlannerProps> = ({ profile, checkIn }) => {
       {loading && (
         <div className="w-full sticker-card p-12 bg-[#C6FF00]/20 flex flex-col items-center justify-center space-y-4 border-dashed animate-pulse duration-1000">
           <div className="p-4 bg-white border-4 border-[#09090B] rounded-full animate-spin">
-            <RefreshCw className="w-8 h-8 text-[#09090B] stroke-[2.5]" />
+            <Loader2 className="w-8 h-8 text-[#09090B] stroke-[2.5]" />
           </div>
-          <h4 className="font-display font-black text-lg md:text-xl text-[#09090B]">
-            Calculating Coaching Plan... 🗺️
+          <h4 className="font-display font-black text-lg md:text-xl text-[#09090B] text-center">
+            Crunching your numbers with care...
           </h4>
-          <p className="font-mono text-xs text-[#09090B]/70 uppercase font-black text-center max-w-sm leading-relaxed">
-            parsing financial values • researching safe government rates • structuring personalized path
+          <p className="font-sans font-medium text-sm text-[#09090B]/80 text-center max-w-sm leading-relaxed">
+            Just a few seconds more — we're making sure every rupee counts.
           </p>
         </div>
       )}
